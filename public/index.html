@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Consulte instrumentos e repasses públicos da União e do Estado para São Bernardo do Campo.">
+<title>Recursos Recebidos · São Bernardo do Campo</title>
+<link rel="icon" href="/marca.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Ir para o conteúdo</a>
+<header class="top"><div class="shell top-row">
+  <a class="brand" href="#consulta" aria-label="Recursos Recebidos, início"><img src="/marca.svg" alt="" width="42" height="42"><span><strong>Recursos Recebidos</strong><small>São Bernardo do Campo</small></span></a>
+  <nav aria-label="Menu principal">
+    <a href="#consulta" data-view="consulta">Consulta</a>
+    <a href="#excel" data-view="excel">Motor Excel</a>
+    <a href="#fontes" data-view="fontes">Fontes e cobertura</a>
+  </nav>
+  <span class="public-tag"><i></i> Acesso público</span>
+</div></header>
+<main id="main" class="shell">
+<section id="consulta" class="view">
+  <div class="hero">
+    <div><p class="eyebrow">SÃO BERNARDO DO CAMPO · SP</p><h1>Recursos recebidos</h1><p class="intro">Consulte convênios, instrumentos e repasses da União e do Estado ao Município e às suas unidades. As emendas parlamentares têm consulta própria.</p></div>
+    <div class="hero-panel"><span class="hero-label">BASES OFICIAIS</span><strong id="hero-status">Consultando fontes</strong><small id="hero-date" aria-live="polite">Aguarde o carregamento</small><a href="#fontes">Ver cobertura das fontes</a></div>
+  </div>
+  <div id="stats" class="stats" aria-label="Totais do recorte"></div>
+  <section class="workspace" aria-labelledby="table-title">
+    <div class="workspace-head"><div><h2 id="table-title">Explorar os dados</h2><p id="table-definition"></p></div><a class="btn secondary" href="#excel">Configurar Excel</a></div>
+    <div class="types" aria-label="Tipo de consulta"><button data-table="instruments" type="button">Instrumentos</button><button data-table="payments" type="button">Repasses</button></div>
+    <div class="toolbar">
+      <label class="search"><span aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Busque por objeto, número, órgão ou unidade" aria-label="Pesquisar registros" maxlength="180"></label>
+      <button id="filters-toggle" class="btn secondary" type="button" aria-expanded="false" aria-controls="filters">Filtros <span id="filter-count"></span></button>
+      <details id="columns" class="columns"><summary class="btn secondary">Colunas</summary><div id="column-options" class="popover"></div></details>
+    </div>
+    <div id="quick" class="facets"></div>
+    <div id="filters" class="filter-panel" hidden></div>
+    <div id="chips" class="chips" hidden></div>
+    <div id="result-info" class="result-info" aria-live="polite"></div>
+    <div id="grid" class="grid" tabindex="0" aria-label="Tabela de resultados"></div>
+    <div id="pagination" class="pagination"></div>
+  </section>
+</section>
+<section id="excel" class="view" hidden>
+  <div class="subhero"><p class="eyebrow">EXPORTAÇÃO</p><h1>Motor Excel</h1><p>Escolha a tabela, marque os campos e organize as colunas da sua planilha.</p></div>
+  <section class="workspace excel-box">
+    <div class="workspace-head"><div><h2>Configurar planilha</h2><p>A prévia acompanha a ordem das colunas e o recorte selecionado.</p></div><button id="download" type="button" class="btn primary">Baixar .xlsx</button></div>
+    <div class="excel-settings"><label>Tabela <select id="export-table"><option value="instruments">Instrumentos</option><option value="payments">Repasses</option></select></label><label>Registros <select id="export-scope"><option value="filtered">Resultados filtrados</option><option value="all">Todos os registros da tabela</option></select></label></div>
+    <div class="excel-grid"><section><h3>Campos disponíveis</h3><div class="field-actions"><button id="select-all" class="link-button" type="button">Selecionar todos</button><button id="deselect-all" class="link-button" type="button">Limpar seleção</button></div><div id="excel-fields"></div></section><section><h3>Ordem das colunas</h3><p id="excel-count" class="muted"></p><div id="export-order"></div></section></div>
+    <h3>Prévia</h3><div id="export-preview" class="grid" tabindex="0" aria-label="Prévia da planilha"></div>
+    <p id="export-message" class="muted" aria-live="polite"></p>
+  </section>
+</section>
+<section id="fontes" class="view" hidden>
+  <div class="subhero"><p class="eyebrow">TRANSPARÊNCIA DOS DADOS</p><h1>Fontes e cobertura</h1><p>Veja o que cada fonte publica e como interpretar os valores mostrados no portal.</p></div>
+  <div id="sources" class="source-grid"></div>
+  <section class="workspace method"><h2>Como ler os dados</h2><dl><dt>Parte concedente e parte recebedora</dt><dd>A consulta usa o cadastro público de beneficiários e proponentes e procura identificar a administração municipal de São Bernardo do Campo, incluindo fundos municipais. Entidades privadas localizadas no município estão fora do recorte.</dd><dt>Instrumento e repasse</dt><dd>O instrumento registra o ajuste, o objeto, a vigência e os valores pactuados quando informados. O repasse registra o desembolso divulgado pela origem. Quotas-partes estaduais são consolidadas por mês, com a base bruta ou líquida indicada na ficha. Um desembolso do concedente pode ter data diferente do crédito na contabilidade municipal.</dd><dt>Emendas</dt><dd>Instrumentos com vínculo parlamentar identificado são excluídos, inclusive os de financiamento misto quando a parcela de emenda não pode ser isolada com segurança. Registros estaduais sem classificação conclusiva ficam fora dos totais até a conferência.</dd><dt>Dados faltantes</dt><dd>Um traço indica campo ausente na fonte. A cobertura varia conforme o conjunto de dados e pode ser parcial.</dd></dl></section>
+</section>
+</main>
+<footer class="shell footer"><span>Recursos Recebidos · São Bernardo do Campo</span><a href="#fontes">Metodologia e fontes oficiais</a></footer>
+<dialog id="detail"><div class="dialog-head"><div><p class="eyebrow" id="detail-source"></p><h2 id="detail-title">Ficha do registro</h2></div><form method="dialog"><button type="submit" class="btn secondary" aria-label="Fechar ficha">Fechar</button></form></div><div id="detail-body"></div></dialog>
+</body>
+</html>

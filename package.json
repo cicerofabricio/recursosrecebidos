@@ -1,0 +1,1 @@
+{"name":"recursosrecebidos","private":true,"type":"module","scripts":{"check":"node --check public/app.js && node --check public/xlsx.js && node --check worker.mjs"}}
