@@ -66,3 +66,9 @@ dialog{border:1px solid var(--line);border-radius:15px;width:min(800px,calc(100%
 .area-menu a[aria-current=page]{border-color:var(--line)}
 .area-menu+.view .hero{margin-top:12px}
 @media(max-width:640px){.area-menu{margin-top:9px;padding-bottom:0}}
+
+.facet .popover{overflow:visible;max-height:none;width:min(340px,80vw)}
+.facet-actions{display:flex;gap:4px 12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:5px}
+.facet-options{overflow:auto;max-height:min(245px,32dvh);overscroll-behavior:contain}
+.facet-options label{min-height:34px}
+@media(max-width:640px){.facet .popover{width:auto}.facet-actions button{min-height:35px}.facet-options label{min-height:42px}}

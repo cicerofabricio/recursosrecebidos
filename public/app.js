@@ -31,33 +31,35 @@ const labelList = {
   paid:'Valor desembolsado', proposal:'Nº da proposta', process:'Nº do processo',
   day:'Data do repasse', period:'Competência', document:'Documento financeiro',
   granted:'Valor concedido', amendment:'Origem parlamentar', agencyUnit:'Unidade celebrante',
+  amendmentCode:'Nº da emenda', author:'Autoria', relatedNumber:'Nº informado do instrumento',
 }
 const areas = {
   federal: {
     name:'Federal', heading:'Recursos federais',
-    description:'Convênios, contratos de repasse, planos fundo a fundo e desembolsos da União para São Bernardo do Campo.',
-    help:'O Transferegov publica propostas e planos fundo a fundo em APIs. Convênios e desembolsos são cruzados com os arquivos oficiais do mesmo portal. O recorte federal exclui instrumentos com vínculo parlamentar identificado.',
+    description:'Convênios, contratos de repasse, planos fundo a fundo, parcerias, transferências especiais e desembolsos da União para São Bernardo do Campo.',
+    help:'A consulta inclui os instrumentos publicados pelo Transferegov, inclusive os de origem parlamentar. Planos e transferências sem desembolso informado ficam disponíveis ao selecionar todos os valores.',
     names:{instruments:'Instrumentos e planos',payments:'Desembolsos'},
-    subtitles:{instruments:'Consulte convênios, contratos de repasse e planos fundo a fundo. Veja os valores pactuados ou previstos em cada instrumento.',payments:'Consulte os desembolsos federais por instrumento e documento financeiro.'},
+    subtitles:{instruments:'Consulte convênios, contratos, parcerias e planos de ação. Veja os valores pactuados ou previstos em cada instrumento.',payments:'Consulte os desembolsos federais por instrumento e documento financeiro.'},
     fields:{
-      instruments:['number','agency','recipient','cnpj','type','object','status','year','signed','start','end','total','transfer','counterpart','paid','proposal','process','source'],
+      instruments:['number','agency','recipient','cnpj','type','object','status','amendment','amendmentCode','author','year','signed','start','end','total','transfer','counterpart','paid','proposal','process','source'],
       payments:['period','day','number','document','agency','recipient','cnpj','type','object','year','paid','source'],
     },
     defaults:{instruments:['number','agency','recipient','object','status','transfer','paid'],payments:['period','day','number','recipient','object','paid']},
-    filters:{instruments:['year','recipient','type','status','source'],payments:['year','recipient','type','agency']},
+    filters:{instruments:['paid','year','recipient','type','status','amendment','source'],payments:['paid','year','recipient','type','agency']},
   },
   estadual: {
     name:'Estadual', heading:'Recursos estaduais',
-    description:'Convênios do Estado de São Paulo e quotas-partes repassadas a São Bernardo do Campo.',
-    help:'Os convênios estaduais entram nos totais. A consulta pública estadual não distingue, registro a registro, quais têm origem parlamentar.',
-    names:{instruments:'Convênios',payments:'Quotas-partes'},
-    subtitles:{instruments:'Consulte convênios estaduais, seus valores previstos e concedidos e a vigência.',payments:'Consulte ICMS, IPVA, IPI Exportação e compensação financeira por competência.'},
+    description:'Convênios, emendas e quotas-partes do Estado de São Paulo para São Bernardo do Campo.',
+    help:'Todos os convênios encontrados entram na consulta. A origem parlamentar é indicada quando o Portal da Transparência SP informa um vínculo com a emenda. Os valores de emendas e convênios são exibidos em totais próprios, pois podem se referir ao mesmo repasse.',
+    names:{instruments:'Convênios',amendments:'Emendas',payments:'Quotas-partes'},
+    subtitles:{instruments:'Consulte convênios estaduais, seus valores previstos e concedidos e a vigência.',amendments:'Consulte as emendas destinadas a órgãos municipais, com valores repassados e vínculos publicados pelo Estado.',payments:'Consulte ICMS, IPVA, IPI Exportação e compensação financeira por competência.'},
     fields:{
-      instruments:['number','agency','agencyUnit','recipient','cnpj','type','object','amendment','year','start','end','total','granted','source'],
+      instruments:['number','agency','agencyUnit','recipient','cnpj','type','object','amendment','amendmentCode','year','start','end','total','granted','source'],
+      amendments:['amendmentCode','author','agency','recipient','cnpj','type','object','status','year','relatedNumber','total','granted','source'],
       payments:['period','agency','recipient','cnpj','type','object','year','paid','source'],
     },
-    defaults:{instruments:['number','agency','recipient','object','year','total','granted','amendment'],payments:['period','object','recipient','paid']},
-    filters:{instruments:['year','agency','recipient','amendment'],payments:['year','period','object']},
+    defaults:{instruments:['number','agency','recipient','object','year','total','granted','amendment'],amendments:['amendmentCode','author','recipient','object','year','granted','relatedNumber'],payments:['period','object','recipient','paid']},
+    filters:{instruments:['granted','year','agency','recipient','amendment'],amendments:['granted','year','author','recipient','type'],payments:['year','period','object']},
   },
 }
 const amounts = new Set(['total','transfer','counterpart','paid','granted'])
@@ -71,27 +73,34 @@ const textValue = (key,value) => {
   if (key === 'cnpj' && /^\d{14}$/.test(value)) return value.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
   return String(value)
 }
-const tableTypes = ['instruments','payments']
+const tableTypes = ['instruments','payments','amendments']
+const positiveField = (area,type) => area==='federal'?'paid':type==='payments'?null:'granted'
+const defaultFields = (area,type) => {
+  const key=positiveField(area,type)
+  return new Map(key?[[key,'positive']]:[])
+}
 const initial = (area,type) => ({
-  q:'', fields:new Map(), sort:type==='instruments'?'year':'period',
+  q:'', fields:defaultFields(area,type), sort:type==='payments'?'period':'year',
   direction:-1, columns:[...areas[area].defaults[type]], page:0, size:15,
 })
 const state = {
   area:'federal', data:null, error:false,
   workspaces:Object.fromEntries(Object.entries(areas).map(([area,config])=>[area,{
     table:'instruments', exportTable:'instruments', exportScope:'filtered',
-    grids:Object.fromEntries(tableTypes.map(type=>[type,initial(area,type)])),
-    order:Object.fromEntries(tableTypes.map(type=>[type,[...config.defaults[type]]])),
+    grids:Object.fromEntries(Object.keys(config.fields).map(type=>[type,initial(area,type)])),
+    order:Object.fromEntries(Object.keys(config.fields).map(type=>[type,[...config.defaults[type]]])),
   }])),
 }
 const workspace = () => state.workspaces[state.area]
 const areaConfig = () => areas[state.area]
 const rows = (key,area=state.area) => state.data?.groups[area][key] || []
-const columnLabel = key => state.area==='estadual' && key==='paid'?'Valor da quota-parte':labelList[key]
+const columnLabel = (key, type=workspace().table) => state.area==='estadual'
+  ? key==='paid'?'Valor da quota-parte':type==='amendments'&&key==='granted'?'Valor repassado':type==='amendments'&&key==='total'?'Valor previsto':labelList[key]
+  : labelList[key]
 try {
   const current = JSON.parse(localStorage.getItem('recursos-excel-v2') || 'null')
   const saved = current || {federal:JSON.parse(localStorage.getItem('recursos-excel-v1') || '{}')}
-  for (const [area,config] of Object.entries(areas)) for (const type of tableTypes) {
+  for (const [area,config] of Object.entries(areas)) for (const type of Object.keys(config.fields)) {
     if (Array.isArray(saved[area]?.[type])) {
       const chosen = [...new Set(saved[area][type].filter(key=>config.fields[type].includes(key)))]
       if (chosen.length || saved[area][type].length===0) state.workspaces[area].order[type]=chosen
@@ -103,11 +112,12 @@ const withTerm = (list, query) => {
   const words = norm(query).trim().split(/\s+/).filter(Boolean)
   return words.length ? list.filter(r => words.every(term => r.search.includes(term))) : list
 }
+const accepts = (selection,value) => !selection || (selection==='positive' ? typeof value==='number' && value>0 : selection.has(value))
 function filtered(type, ignored) {
   const config = workspace().grids[type]
   return withTerm(rows(type),config.q).filter(row => {
     for (const [key,values] of config.fields) {
-      if (key !== ignored && !values.has(keyFor(row[key]))) return false
+      if (key !== ignored && !accepts(values,keyFor(row[key]))) return false
     }
     return true
   })
@@ -132,8 +142,10 @@ function setStats() {
   const stats = type==='instruments'
     ? state.area==='estadual'
       ? [count,recipients,['Valor total dos convênios',sum(list,'total'),'Previsto nos instrumentos do recorte'],['Valor concedido',sum(list,'granted'),'Repassado segundo o Portal da Transparência SP']]
-      : [count,recipients,['Repasse pactuado ou previsto',sum(list,'transfer'),'Inclui os planos fundo a fundo'],['Desembolsado',sum(list,'paid'),'Valores informados para os instrumentos']]
-    : [count,recipients,['Competências',formatCount(new Set(list.map(i=>i.period).filter(Boolean)).size),'Meses com registro no recorte'],[
+      : [count,recipients,['Repasse pactuado ou previsto',sum(list,'transfer'),'Valores previstos nos instrumentos do recorte'],['Desembolsado',sum(list,'paid'),'Valores informados para os instrumentos']]
+    : type==='amendments'
+      ? [count,recipients,['Valor previsto',sum(list,'total'),'Conforme as emendas no recorte'],['Valor repassado',sum(list,'granted'),'Conforme o Portal da Transparência SP']]
+      : [count,recipients,['Competências',formatCount(new Set(list.map(i=>i.period).filter(Boolean)).size),'Meses com registro no recorte'],[
       state.area==='estadual'?'Total das quotas-partes':'Total desembolsado',sum(list,'paid'),
       state.area==='estadual'?'Valores conforme a base indicada na ficha':'Desembolsos do recorte',
     ]]
@@ -150,10 +162,10 @@ function table(cols, list, type, actionable) {
   for (const k of cols) {
     const th = element('th')
     th.scope = 'col'
-    th.textContent = columnLabel(k)
+    th.textContent = columnLabel(k,type)
     if (actionable) {
       const config = workspace().grids[type]
-      const sort = button(columnLabel(k), () => {
+      const sort = button(columnLabel(k,type), () => {
         config.direction = config.sort === k ? -config.direction : (k === 'period' || dates.has(k) || amounts.has(k) || k === 'year' ? -1 : 1)
         config.sort = k
         config.page = 0
@@ -218,16 +230,21 @@ function renderResults() {
 function closePeers(active) {
   for (const d of document.querySelectorAll('.facet[open], .columns[open]')) if (d!==active) d.open = false
 }
+function changeFacet(key, selection) {
+  const config=workspace().grids[workspace().table]
+  if (selection) config.fields.set(key,selection)
+  else config.fields.delete(key)
+  config.page=0
+  updateFacetLabels()
+  renderResults()
+}
 function populateFacet(panel,key,query) {
   const type = workspace().table
-  const config = workspace().grids[type]
-  const selected = config.fields.get(key) || new Set()
-  const counts = new Map()
+  const counts = new Map(rows(type).map(row=>[keyFor(row[key]),0]))
   for (const row of filtered(type,key)) {
     const value = keyFor(row[key])
-    counts.set(value,(counts.get(value)||0)+1)
+    counts.set(value,counts.get(value)+1)
   }
-  for (const value of selected) if (!counts.has(value)) counts.set(value,0)
   const itemList = panel.lastChild
   itemList.replaceChildren()
   const options = [...counts].filter(([v]) => norm(v===null?'Não informado':textValue(key,v)).includes(norm(query)))
@@ -236,15 +253,13 @@ function populateFacet(panel,key,query) {
     const label = element('label')
     const checkbox = element('input')
     checkbox.type='checkbox'
-    checkbox.checked=selected.has(value)
+    checkbox.checked=accepts(workspace().grids[type].fields.get(key),value)
     checkbox.addEventListener('change',()=>{
+      const previous = workspace().grids[type].fields.get(key)
+      const selected = new Set([...counts.keys()].filter(v=>accepts(previous,v)))
       if (checkbox.checked) selected.add(value)
       else selected.delete(value)
-      if (selected.size) config.fields.set(key,selected)
-      else config.fields.delete(key)
-      config.page = 0
-      updateFacetLabels()
-      renderResults()
+      changeFacet(key,selected.size===counts.size ? null : selected)
     })
     label.append(checkbox,element('span',`${value===null?'Não informado':textValue(key,value)} (${count})`))
     itemList.append(label)
@@ -260,56 +275,63 @@ function facet(k) {
   search.type='search'
   search.placeholder='Procurar opção'
   search.setAttribute('aria-label',`Procurar em ${columnLabel(k)}`)
-  search.addEventListener('input',()=>populateFacet(pop,k,search.value))
-  pop.append(search,element('div'))
+  const refresh=()=>populateFacet(pop,k,search.value)
+  const controls=element('div',undefined,'facet-actions')
+  const action=(label,selection)=>button(label,()=>{changeFacet(k,selection);refresh()},'link-button')
+  controls.append(action('Selecionar todos',null),action('Desmarcar todos',new Set()))
+  if(k===positiveField(state.area,workspace().table)) controls.append(action('Somente valores positivos','positive'))
+  search.addEventListener('input',refresh)
+  pop.append(search,controls,element('div',undefined,'facet-options'))
   detail.append(summary,pop)
-  detail.addEventListener('toggle',()=>{if(detail.open){closePeers(detail);search.value='';populateFacet(pop,k,'')}})
+  detail.addEventListener('toggle',()=>{if(detail.open){closePeers(detail);search.value='';refresh()}})
   return detail
+}
+function filterDescription(selection) {
+  return selection==='positive'?'superior a zero':selection.size===0?'nenhum selecionado':`${selection.size} ${selection.size===1?'selecionado':'selecionados'}`
 }
 function updateFacetLabels() {
   for (const d of document.querySelectorAll('.facet')) {
     const key = d.dataset.field
-    const n = workspace().grids[workspace().table].fields.get(key)?.size || 0
-    d.dataset.active = String(n>0)
-    d.firstChild.textContent = columnLabel(key)+(n?` · ${n}`:'')
+    const selection = workspace().grids[workspace().table].fields.get(key)
+    d.dataset.active = String(Boolean(selection))
+    d.firstChild.textContent = columnLabel(key)+(selection?` · ${filterDescription(selection)}`:'')
   }
 }
 function renderChips() {
-  const config = workspace().grids[workspace().table]
+  const type=workspace().table
+  const config = workspace().grids[type]
   const chips = $('chips')
   chips.replaceChildren()
-  let count = 0
-  for (const [k,values] of config.fields) {
-    count += values.size
-    for (const value of values) {
-      chips.append(button(`${columnLabel(k)} · ${value===null?'Não informado':textValue(k,value)} ×`,()=>{
-        values.delete(value)
-        if (!values.size) config.fields.delete(k)
-        config.page=0
-        closePeers()
-        updateFacetLabels()
-        renderResults()
-      },'chip'))
-    }
+  for (const [key,selection] of config.fields) {
+    const chip=button(`${columnLabel(key)} · ${filterDescription(selection)} ×`,()=>{
+      closePeers()
+      changeFacet(key,null)
+    },'chip')
+    chip.setAttribute('aria-label',`Remover filtro de ${columnLabel(key)}`)
+    chips.append(chip)
   }
-  if (count || config.q) chips.append(button('Limpar filtros',()=>{
-    config.fields.clear()
+  const standard=defaultFields(state.area,type)
+  const changed=config.q || config.fields.size!==standard.size || [...standard].some(([k,v])=>config.fields.get(k)!==v)
+  function reset(fields) {
+    config.fields=fields
     config.q=''
     config.page=0
     $('q').value=''
     closePeers()
     updateFacetLabels()
     renderResults()
-  },'link-button'))
-  chips.hidden = !(count || config.q)
-  $('filter-count').textContent = count ? `(${count})` : ''
+  }
+  if (config.fields.size || config.q) chips.append(button('Limpar filtros',()=>reset(new Map()),'link-button'))
+  if (standard.size && changed) chips.append(button('Restaurar padrão',()=>reset(standard),'link-button'))
+  chips.hidden = !chips.children.length
+  $('filter-count').textContent = config.fields.size ? `(${config.fields.size})` : ''
 }
 function renderColumns() {
   const type = workspace().table
   const config = workspace().grids[type]
   const parent = $('column-options')
   parent.replaceChildren()
-  parent.append(button('Restaurar colunas',()=>{config.columns=[...defaults[type]];renderColumns();renderResults()},'link-button'))
+  parent.append(button('Restaurar colunas',()=>{config.columns=[...areaConfig().defaults[type]];renderColumns();renderResults()},'link-button'))
   for (const key of areaConfig().fields[type]) {
     const label = element('label')
     const input = element('input')
@@ -330,7 +352,8 @@ function renderColumns() {
 function renderTable() {
   const type = workspace().table
   for (const b of document.querySelectorAll('[data-table]')) {
-    b.textContent = areaConfig().names[b.dataset.table]
+    b.hidden = !areaConfig().names[b.dataset.table]
+    b.textContent = areaConfig().names[b.dataset.table] || ''
     b.setAttribute('aria-pressed',String(b.dataset.table===type))
   }
   $('table-definition').textContent = areaConfig().subtitles[type]
@@ -345,14 +368,14 @@ function renderTable() {
 function openDetail(row,type) {
   const d = $('detail')
   $('detail-source').textContent = `${row.origin} · ${row.source}`
-  $('detail-title').textContent = type==='instruments' ? `${row.origin==='Estado'?'Convênio':row.id.startsWith('faf-')?'Plano de ação':'Instrumento'} ${row.number}` : `Repasse ${row.document || row.number || row.object || ''}`
+  $('detail-title').textContent = type==='instruments' ? `${row.origin==='Estado'?'Convênio':/^(faf|pix)-/.test(row.id)?'Plano de ação':'Instrumento'} ${row.number}` : type==='amendments' ? `Emenda ${row.amendmentCode}` : `Repasse ${row.document || row.number || row.object || ''}`
   const fields = element('dl',undefined,'dialog-grid')
   function field(label,value, full=false) {
     const node = element('div',undefined,full?'full':'')
     node.append(element('dt',label),element('dd',value))
     fields.append(node)
   }
-  for (const k of areaConfig().fields[type]) if (k!=='object') field(columnLabel(k),textValue(k,row[k]))
+  for (const k of areaConfig().fields[type]) if (k!=='object') field(columnLabel(k,type),textValue(k,row[k]))
   if (!absent(row.object)) field('Objeto',row.object,true)
   for (const [label,value] of Object.entries(row.details || {})) {
     if (!absent(value)) field(label,/^\d{4}-\d{2}-\d{2}$/.test(value)?textValue('day',value):String(value))
@@ -366,7 +389,7 @@ function openDetail(row,type) {
     a.className='btn secondary'
     content.append(a)
   }
-  if (type === 'payments') {
+  if (row.instrumentId) {
     const i = rows('instruments').find(x=>x.id===row.instrumentId)
     if (i) content.append(button('Ver instrumento',()=>openDetail(i,'instruments')))
   }
@@ -533,7 +556,7 @@ function renderExcel() {
   const type = workspace().exportTable
   const list = exportRows()
   const fields = workspace().order[type]
-  for (const option of $('export-table').options) option.textContent=areaConfig().names[option.value]
+  $('export-table').replaceChildren(...Object.entries(areaConfig().names).map(([key,label])=>new Option(label,key)))
   $('export-table').value=type
   $('export-scope').value=workspace().exportScope
   const fieldList = $('excel-fields')
@@ -551,11 +574,11 @@ function renderExcel() {
       const focus = fieldList.querySelectorAll('input')[areaConfig().fields[type].indexOf(key)]
       focus?.focus()
     })
-    label.append(input,element('span',columnLabel(key)))
+    label.append(input,element('span',columnLabel(key,type)))
     fieldList.append(label)
   }
   $('excel-count').textContent=`${fields.length} colunas · ${list.length} registros`
-  renderColumnOrder($('export-order'), fields.map(key => [key,columnLabel(key)]), next => {
+  renderColumnOrder($('export-order'), fields.map(key => [key,columnLabel(key,type)]), next => {
     workspace().order[type] = next
     saveExcel()
     renderExcel()
@@ -565,8 +588,11 @@ function renderExcel() {
 }
 const sources = [
   ['Transferegov.br · Discricionárias e Legais','https://api-publica.transferegov.gestao.gov.br/discricionarias/docs','Propostas consultadas pela API. Convênios, contratos de repasse, desembolsos, empenhos, aditivos, prorrogações e metas cruzados com os arquivos oficiais do Transferegov.','federalProposalUpdatedAt'],
-  ['Transferegov.br · Fundo a Fundo','https://api-publica.transferegov.gestao.gov.br/fundoafundo/docs','Planos de ação autorizados, sem parcela de emenda identificada. O valor do plano representa a previsão de repasse.','federalFundUpdatedAt'],
+  ['Transferegov.br · Fundo a Fundo','https://api-publica.transferegov.gestao.gov.br/fundoafundo/docs','Planos de ação autorizados, inclusive quando a fonte identifica parcela de emenda. O valor do plano representa a previsão de repasse.','federalFundUpdatedAt'],
   ['Portal da Transparência de São Paulo','https://www.transparencia.sp.gov.br/Convenios','Convênios e transferências para o Município e unidades identificadas. A base informa valor total e valor concedido.','stateUpdatedAt'],
+  ['Transferegov.br · Transferências Especiais','https://api-publica.transferegov.gestao.gov.br/especiais/docs','Planos de ação de emendas especiais. A ficha distingue o valor planejado e a informação financeira publicada.','federalSpecialUpdatedAt'],
+  ['Transferegov.br · Gestão de Parcerias','https://api-publica.transferegov.gestao.gov.br/parcerias/docs','Parcerias e emendas vinculadas a propostas municipais, incluindo as divulgadas pelo módulo para o Fundo Municipal de Saúde. O desembolso soma as ordens pagas disponíveis na fonte.','federalPartnershipUpdatedAt'],
+  ['Portal da Transparência de São Paulo · Emendas','https://www.transparencia.sp.gov.br/EmendasParlamentares/Concedidas','Emendas concedidas a beneficiários municipais identificados. Os totais desta consulta podem abranger repasses que também aparecem em convênios.','stateAmendmentUpdatedAt'],
   ['Sefaz-SP','https://portal.fazenda.sp.gov.br/acessoinformacao/Paginas/Transfer%C3%AAncias-Constitucionais-a-Municipios.aspx','Quotas-partes municipais desde 2020, com as bases de cálculo publicadas pela Sefaz-SP.'],
 ]
 function renderSource() {
@@ -583,9 +609,12 @@ function renderSource() {
   const counts=[
     rows('instruments','federal').filter(r=>r.source==='Transferegov.br').length,
     rows('instruments','federal').filter(r=>r.source==='Transferegov.br · Fundo a Fundo').length,
-    rows('instruments','estadual').length,rows('payments','estadual').length,
+    rows('instruments','estadual').length,
+    rows('instruments','federal').filter(r=>r.source==='Transferegov.br · Transferências Especiais').length,
+    rows('instruments','federal').filter(r=>r.source==='Transferegov.br · Gestão de Parcerias').length,
+    rows('amendments','estadual').length,rows('payments','estadual').length,
   ]
-  const labels=['instrumentos','planos de ação','convênios','registros de quotas-partes']
+  const labels=['instrumentos','planos de ação','convênios','planos de transferências especiais','parcerias','registros de emendas','registros de quotas-partes']
   $('sources').replaceChildren(...sources.map(([name,url,notes,stamp],i)=>{
     const card=element('article',undefined,'source-box')
     const info=i===0&&coverage?.federalProposalMode==='csv'?notes.replace('Propostas consultadas pela API.','Propostas lidas dos arquivos oficiais do Transferegov nesta carga.'):notes
@@ -662,7 +691,7 @@ $('download').addEventListener('click',()=>{
   const fields=workspace().order[type]
   const list=exportRows()
   if (!fields.length || !list.length) return
-  const selected=fields.map(k=>({key:k,label:columnLabel(k),type:amounts.has(k)?'money':dates.has(k)?'date':'text'}))
+  const selected=fields.map(k=>({key:k,label:columnLabel(k,type),type:amounts.has(k)?'money':dates.has(k)?'date':'text'}))
   const blob=makeWorkbook(selected,list,areaConfig().names[type])
   const url=URL.createObjectURL(blob)
   const a=link('',url)
@@ -702,10 +731,10 @@ try {
   if (!response.ok) throw new Error('Falha na consulta')
   const data=await response.json()
   if (!Array.isArray(data.instruments) || !Array.isArray(data.payments) || !data.coverage) throw new Error('Formato inválido')
-  const groups={federal:{instruments:[],payments:[]},estadual:{instruments:[],payments:[]}}
-  for (const type of tableTypes) for (const row of data[type]) {
+  const groups=Object.fromEntries(Object.keys(areas).map(area=>[area,Object.fromEntries(tableTypes.map(type=>[type,[]]))]))
+  for (const type of tableTypes) for (const row of data[type] || []) {
     const area=row.origin==='Estado'?'estadual':row.origin==='União'?'federal':null
-    if (!area) continue
+    if (!area || !areas[area].fields[type]) continue
     row.search=norm(areas[area].fields[type].map(key=>`${row[key]??''} ${textValue(key,row[key])}`).join(' '))
     groups[area][type].push(row)
   }

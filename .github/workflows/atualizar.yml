@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: '23 14 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/atualizar.py'
+      - 'scripts/tributos.py'
+      - '.github/workflows/atualizar.yml'
 
 permissions:
   contents: read

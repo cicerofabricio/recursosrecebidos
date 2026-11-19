@@ -6,8 +6,8 @@
 <meta name="description" content="Consulte instrumentos e repasses públicos da União e do Estado para São Bernardo do Campo.">
 <title>Recursos Recebidos · São Bernardo do Campo</title>
 <link rel="icon" href="/marca.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/app.css?v=abas-origem">
-<script type="module" src="/app.js?v=abas-origem"></script>
+<link rel="stylesheet" href="/app.css?v=emendas-e-filtros">
+<script type="module" src="/app.js?v=emendas-e-filtros"></script>
 </head>
 <body>
 <a class="skip" href="#main">Ir para o conteúdo</a>
@@ -35,7 +35,7 @@
   <div id="stats" class="stats" aria-label="Totais do recorte"></div>
   <section class="workspace" aria-labelledby="table-title">
     <div class="workspace-head"><div><h2 id="table-title">Explorar os dados</h2><p id="table-definition"></p></div><a id="configure-excel" class="btn secondary" href="#federal-excel">Configurar Excel</a></div>
-    <div class="types" aria-label="Tipo de consulta"><button data-table="instruments" type="button">Instrumentos</button><button data-table="payments" type="button">Repasses</button></div>
+    <div class="types" aria-label="Tipo de consulta"><button data-table="instruments" type="button">Instrumentos</button><button data-table="amendments" type="button" hidden>Emendas</button><button data-table="payments" type="button">Repasses</button></div>
     <div class="toolbar">
       <label class="search"><span aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Busque por objeto, número, órgão ou unidade" aria-label="Pesquisar registros" maxlength="180"></label>
       <button id="filters-toggle" class="btn secondary" type="button" aria-expanded="false" aria-controls="filters">Filtros <span id="filter-count"></span></button>
@@ -63,7 +63,7 @@
   <div class="subhero"><p class="eyebrow">TRANSPARÊNCIA DOS DADOS</p><h1>Fontes e cobertura</h1><p>Veja o que cada fonte publica e como interpretar os valores mostrados no portal.</p></div>
   <p id="portal-update" class="muted" aria-live="polite"></p>
   <div id="sources" class="source-grid"></div>
-  <section class="workspace method"><h2>Como ler os dados</h2><dl><dt>Parte concedente e parte recebedora</dt><dd>A consulta usa o cadastro público de beneficiários e proponentes e procura identificar a administração municipal de São Bernardo do Campo, incluindo fundos municipais. Entidades privadas localizadas no município estão fora do recorte.</dd><dt>Instrumento e repasse</dt><dd>A aba Federal mostra instrumentos, valores previstos e desembolsos divulgados pelo Transferegov. Os planos fundo a fundo apresentam o valor previsto. Na aba Estadual, o valor total previsto e o valor concedido dos convênios seguem o dicionário do Portal da Transparência SP. As quotas-partes são consolidadas por mês, com a base bruta ou líquida indicada na ficha.</dd><dt>Emendas</dt><dd>O recorte federal exclui instrumentos com vínculo parlamentar identificado. Os convênios estaduais integram os totais dessa esfera. A origem parlamentar aparece como “Não identificada” quando a fonte não a discrimina.</dd><dt>Dados faltantes</dt><dd>Um traço indica campo ausente na fonte. A cobertura varia conforme o conjunto de dados e pode ser parcial.</dd></dl></section>
+  <section class="workspace method"><h2>Como ler os dados</h2><dl><dt>Parte concedente e parte recebedora</dt><dd>A consulta usa o cadastro público de beneficiários e proponentes e procura identificar a administração municipal de São Bernardo do Campo, incluindo fundos municipais. Entidades privadas localizadas no município estão fora do recorte.</dd><dt>Instrumento e repasse</dt><dd>A aba Federal mostra instrumentos, valores previstos e desembolsos divulgados pelo Transferegov. Os planos fundo a fundo apresentam o valor previsto. Na aba Estadual, o valor total previsto e o valor concedido dos convênios seguem o dicionário do Portal da Transparência SP. As quotas-partes são consolidadas por mês, com a base bruta ou líquida indicada na ficha.</dd><dt>Emendas</dt><dd>Os instrumentos de origem parlamentar integram a consulta federal. São Paulo publica convênios e emendas em consultas próprias. Quando a fonte informa o número do convênio e o beneficiário coincide, a ficha indica a emenda vinculada. Consulte os totais por tabela, pois o mesmo repasse pode aparecer nas duas bases estaduais.</dd><dt>Dados faltantes</dt><dd>Um traço indica campo ausente na fonte. O recorte depende das modalidades, períodos e beneficiários identificáveis em cada fonte. As APIs do Transferegov cobrem as modalidades publicadas nos módulos indicados acima.</dd></dl></section>
 </section>
 </main>
 <footer class="shell footer"><span>Recursos Recebidos · São Bernardo do Campo</span><a href="#fontes">Metodologia e fontes oficiais</a></footer>

@@ -5,6 +5,14 @@ const repository = 'cicerofabricio/recursosrecebidos'
 const workflow = repository+'/.github/workflows/atualizar.yml@refs/heads/main'
 const snapshotName = 'publico-v1'
 const maxBytes = 5_000_000
+const specialSource = 'Transferegov.br · Transferências Especiais'
+const partnershipSource = 'Transferegov.br · Gestão de Parcerias'
+const stateAmendmentSource = 'Portal da Transparência SP · Emendas'
+const officialMunicipalNames = new Set(['PREFEITURA MUNICIPAL DE SAO BERNARDO DO CAMPO',
+  'MUNICIPIO DE SAO BERNARDO DO CAMPO','FUNDO MUNICIPAL DE SAUDE DE SAO BERNARDO DO CAMPO'])
+const municipalIdentity = row => typeof row.cnpj==='string' && (/^\d{14}$/.test(row.cnpj) ||
+  (row.cnpj==='' && typeof row.recipient==='string' && officialMunicipalNames.has(row.recipient.toUpperCase().normalize('NFD').replace(/\p{M}/gu,''))))
+const moneyValue = value => value===null || Number.isSafeInteger(value)
 const jsonType = 'application/json; charset=utf-8'
 const securityHeaders = {
   'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -41,7 +49,7 @@ async function validIdentity(request) {
     if (h.alg!=='RS256' || !/^[A-Za-z0-9-]{15,120}$/.test(h.kid)
       || c.iss!==issuer || c.aud!==audience || c.repository!==repository || c.repository_id!=='1463460196'
       || c.repository_owner_id!=='196865265' || c.workflow_ref!==workflow || c.ref!=='refs/heads/main'
-      || !['schedule','workflow_dispatch'].includes(c.event_name) || c.runner_environment!=='github-hosted'
+      || !['schedule','workflow_dispatch','push'].includes(c.event_name) || c.runner_environment!=='github-hosted'
       || !Number.isInteger(c.exp) || !Number.isInteger(c.nbf) || !Number.isInteger(c.iat)
       || c.exp<=now || c.nbf>now+30 || c.iat>now+30 || c.exp-c.iat>900) return false
     const jwks=await issuerKeys()
@@ -62,32 +70,54 @@ function validSnapshot(data) {
   if (fileNames.some(name=>!Number.isFinite(Date.parse(data.coverage.federalFiles['siconv_'+name+'.zip'])))) return false
   if (!Array.isArray(data.instruments) || !Array.isArray(data.payments)) return false
   if (data.instruments.length<1 || data.instruments.length>2500 || data.payments.length<1 || data.payments.length>16000) return false
-  if (data.schemaVersion !== undefined && data.schemaVersion !== 2) return false
-  if (data.schemaVersion === 2 && (!['api','csv'].includes(data.coverage.federalProposalMode)
+  const version = data.schemaVersion ?? 1
+  if (![1,2,3].includes(version)) return false
+  if (version >= 2 && (!['api','csv'].includes(data.coverage.federalProposalMode)
     || !Number.isFinite(Date.parse(data.coverage.federalFundUpdatedAt))
     || !Number.isFinite(Date.parse(data.coverage.stateUpdatedAt))
     || (data.coverage.federalProposalMode==='api' && !Number.isFinite(Date.parse(data.coverage.federalProposalUpdatedAt))))) return false
+  if (version===3 && (!Array.isArray(data.amendments) || data.amendments.length<1 || data.amendments.length>2500
+    || !Number.isFinite(Date.parse(data.coverage.federalSpecialUpdatedAt))
+    || !Number.isFinite(Date.parse(data.coverage.federalPartnershipUpdatedAt))
+    || !Number.isFinite(Date.parse(data.coverage.stateAmendmentUpdatedAt)))) return false
   const instruments=new Map()
   const payments=new Set()
   for (const row of data.instruments) {
     if (!row || instruments.has(row.id)) return false
     const federal=(/^tg-[0-9]{4,12}$/.test(row.id)&&row.source==='Transferegov.br')
-      || (data.schemaVersion===2&&/^faf-[0-9]{1,12}$/.test(row.id)&&row.source==='Transferegov.br · Fundo a Fundo'&&row.paid===null)
-    const officialMunicipalName=['PREFEITURA MUNICIPAL DE SAO BERNARDO DO CAMPO','MUNICIPIO DE SAO BERNARDO DO CAMPO','FUNDO MUNICIPAL DE SAUDE DE SAO BERNARDO DO CAMPO']
-    const stateAgreement=data.schemaVersion===2&&/^sp-convenio-\d{6,16}$/.test(row.id)
-      && row.source==='Portal da Transparência SP'&&row.amendment==='Não identificada'
-      && [row.total,row.granted].every(value=>value===null||Number.isSafeInteger(value))
-      && (/^\d{14}$/.test(row.cnpj)||(row.cnpj===''&&typeof row.recipient==='string'&&officialMunicipalName.includes(row.recipient.toUpperCase().normalize('NFD').replace(/\p{M}/gu,''))))
-    if (row.origin==='União' ? !federal||!/^\d{14}$/.test(row.cnpj) : row.origin!=='Estado'||!stateAgreement) return false
+      || (version>=2&&/^faf-[0-9]{1,12}$/.test(row.id)&&row.source==='Transferegov.br · Fundo a Fundo'&&row.paid===null)
+      || (version===3&&/^pix-[0-9]{1,12}$/.test(row.id)&&row.source===specialSource&&row.amendment==='Identificada')
+    const partnership=version===3&&/^parceria-[0-9]{1,12}$/.test(row.id)&&row.source===partnershipSource
+    const stateAgreement=version>=2&&/^sp-convenio-\d{6,16}$/.test(row.id)
+      && row.source==='Portal da Transparência SP'&&
+      (row.amendment==='Não identificada'||(version===3&&row.amendment==='Identificada'))
+      && [row.total,row.granted].every(moneyValue) && municipalIdentity(row)
+    if (row.origin==='União' ? (!federal&&!partnership)||typeof row.cnpj!=='string'||!/^\d{14}$/.test(row.cnpj)||!moneyValue(row.paid)
+      : row.origin!=='Estado'||!stateAgreement) return false
     instruments.set(row.id,row)
   }
   for (const row of data.payments) {
     if (!row || payments.has(row.id)||!Number.isSafeInteger(row.paid)) return false
     if (row.origin==='União') {
       const instrument=instruments.get(row.instrumentId)
-      if (!/^ob-[0-9]{2,27}$/.test(row.id)||row.source!=='Transferegov.br'||instrument?.source!=='Transferegov.br'||instrument.cnpj!==row.cnpj) return false
+      const conventional = /^ob-[0-9]{2,27}$/.test(row.id)&&row.source==='Transferegov.br'
+      const special = version===3&&/^pix-ob-[0-9]{1,12}$/.test(row.id)&&row.source===specialSource
+      const partnership = version===3&&/^parceria-ob-[0-9]{1,12}$/.test(row.id)&&row.source===partnershipSource
+      if ((!conventional&&!special&&!partnership)||instrument?.source!==row.source||instrument.cnpj!==row.cnpj||instrument.number!==row.number) return false
     } else if (row.origin!=='Estado'||!/^sp-tributo-\d{4}-\d{2}-[1-4]$/.test(row.id)||row.source!=='Sefaz-SP'||row.instrumentId||row.cnpj!=='46523239000147') return false
     payments.add(row.id)
+  }
+  const amendmentIds=new Set()
+  for (const row of version===3?data.amendments:[]) {
+    if (!row || row.origin!=='Estado' || row.source!==stateAmendmentSource || amendmentIds.has(row.id)
+      || !/^sp-emenda-[a-f0-9]{24}$/.test(row.id) || !/^\d{4}\.A?\d{1,10}\.\d{1,12}$/.test(row.amendmentCode)
+      || !municipalIdentity(row) || ![row.total,row.granted].every(moneyValue)) return false
+    if (row.instrumentId) {
+      const instrument=instruments.get(row.instrumentId)
+      if (instrument?.origin!=='Estado'||instrument.number!==row.relatedNumber||instrument.amendment!=='Identificada'
+        || (row.cnpj&&instrument.cnpj&&row.cnpj!==instrument.cnpj)) return false
+    }
+    amendmentIds.add(row.id)
   }
   return true
 }
@@ -103,7 +133,7 @@ async function ingest(request,env,ip) {
   try { data=JSON.parse(text) } catch { return json({erro:'JSON inválido'},400) }
   if (!validSnapshot(data)) return json({erro:'Carga inválida'},422)
   const {metadata}=await env.SNAPSHOTS.getWithMetadata(snapshotName,{type:'stream',cacheTtl:30})
-  if (metadata?.schemaVersion===2 && data.schemaVersion!==2) return json({erro:'Formato anterior à carga ativa'},409)
+  if ((metadata?.schemaVersion||1)>(data.schemaVersion||1)) return json({erro:'Formato anterior à carga ativa'},409)
   if (metadata?.last && Date.parse(data.generatedAt)<=Date.parse(metadata.last)) return json({ok:true,resultado:'Já atualizado'})
   if (metadata?.federal && Date.parse(data.coverage.federalFiles['siconv_convenio.zip'])<Date.parse(metadata.federal)) return json({erro:'Fonte federal anterior à carga ativa'},409)
   await env.SNAPSHOTS.put(snapshotName,text,{metadata:{last:data.generatedAt,federal:data.coverage.federalFiles['siconv_convenio.zip'],schemaVersion:data.schemaVersion||1}})
