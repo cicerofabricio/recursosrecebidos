@@ -60,3 +60,9 @@ dialog{border:1px solid var(--line);border-radius:15px;width:min(800px,calc(100%
 #coverage-toggle:hover,#coverage-toggle[aria-expanded=true]{background:#416658}
 #coverage-tooltip{position:absolute;z-index:6;top:100%;right:-16px;width:min(236px,72vw);padding:10px 12px;border:1px solid #cddbd1;border-radius:8px;background:#fff;color:var(--deep);font-size:.86rem;line-height:1.4;box-shadow:0 6px 20px #101b1a35}
 @media(max-width:640px){#coverage-tooltip{left:-106px;right:auto}}
+
+.area-menu{margin-top:18px;gap:4px}
+.area-menu a{border:1px solid transparent}
+.area-menu a[aria-current=page]{border-color:var(--line)}
+.area-menu+.view .hero{margin-top:12px}
+@media(max-width:640px){.area-menu{margin-top:9px;padding-bottom:0}}

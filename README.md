@@ -4,13 +4,13 @@ Consulta pública de instrumentos e repasses da União e do Estado para São Ber
 
 ## Fontes
 
-- Transferegov.br. A rotina cruza os arquivos oficiais de propostas, instrumentos, emendas, empenhos, desembolsos, aditivos, prorrogações e metas. Filtra a administração pública municipal pelo município e pela natureza jurídica. Propostas que constam da base de emendas e instrumentos com emenda identificada em empenho ficam fora. O valor de cada desembolso é mantido em centavos. Os totais pactuados e desembolsados do cadastro são apresentados separadamente.
-- Sefaz-SP. Quotas-partes estaduais consolidadas por competência desde 2020. Cada linha mantém a modalidade e a base de cálculo publicada. A linha Total e os componentes zerados da fonte ficam fora da captura. IPVA tem base bruta e ICMS e IPI Exportação têm base líquida do FUNDEB na origem.
-- Portal da Transparência de SP. A consulta de convênios é verificada separadamente. O conjunto consultado não fornece classificação suficiente para retirar emendas com segurança. Candidatos ficam fora dos registros e dos totais publicados. A página Fontes e cobertura também dá acesso às fontes complementares ainda sem integração.
+- **Federal.** As propostas são consultadas na API de Discricionárias e Legais do Transferegov. A rotina usa os arquivos oficiais do mesmo portal para instrumentos, desembolsos, empenhos, emendas, aditivos, prorrogações e metas. Se a consulta de propostas falhar ou vier incompleta, a rotina recorre ao arquivo oficial de propostas do mesmo portal e informa isso na cobertura. A API Fundo a Fundo fornece planos de ação autorizados, com parcela de emenda igual a zero. Os valores dos planos são previstos e não entram no total desembolsado.
+- **Estadual.** Os convênios e seus valores total e concedido vêm do Portal da Transparência SP. A fonte não distingue a origem parlamentar, indicada como “Não identificada”. CNPJs são cruzados com as unidades municipais identificadas. Quando a Prefeitura consta pelo nome oficial e o CNPJ está em branco, o registro mantém o CNPJ vazio. As quotas-partes da Sefaz-SP são consolidadas por competência desde 2020. Cada linha mantém a modalidade e a base de cálculo publicada. O IPVA tem base bruta e o ICMS e o IPI Exportação têm base líquida do FUNDEB.
+- Cada aba tem sua consulta e seu Motor Excel. Filtros, colunas e prévia pertencem à aba e à tabela selecionadas.
 
 ## Operação
 
-Execute `python3 scripts/atualizar.py` para gerar `public/dados.json`. Na análise de um extrato local use `--archives <diretório>` com os oito arquivos ZIP já conferidos. Sem essa opção, a rotina usa um diretório temporário isolado e valida a versão do catálogo oficial no começo e no fim da carga.
+Execute `python3 scripts/atualizar.py` para gerar `public/dados.json`. Na análise de um extrato local use `--archives <diretório>` com os arquivos ZIP já conferidos. Sem essa opção, a rotina usa um diretório temporário isolado e valida a versão do catálogo oficial no começo e no fim da carga.
 
 O GitHub Actions executa a atualização diariamente, às 11h23 em São Paulo. Apenas a rotina de `.github/workflows/atualizar.yml` na branch `main` pode publicar a carga. O Worker verifica o token OIDC assinado pelo GitHub, a audiência, os IDs fixos do repositório e proprietário, a origem do disparo e a validade da credencial. A rotina preserva o último extrato disponível quando uma carga falha.
 

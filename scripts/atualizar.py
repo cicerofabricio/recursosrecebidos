@@ -5,19 +5,21 @@ import csv
 import datetime as dt
 import io
 import json
-import os
 import re
 import shutil
 import tempfile
 import unicodedata
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from tributos import state_quotas
 
-BASE = 'https://api-publica.transferegov.gestao.gov.br/downloads/dadosgov/'
+TRANSFEREGOV = 'https://api-publica.transferegov.gestao.gov.br/'
+BASE = TRANSFEREGOV + 'downloads/dadosgov/'
 STATE = 'https://www.transparencia.sp.gov.br/Convenios'
 IBGE = '3548708'
 CITY = 'SAO BERNARDO DO CAMPO'
@@ -90,38 +92,152 @@ def municipal_proposal(p):
         or (CITY in name and name.startswith(('FUNDO MUNICIPAL', 'CAMARA MUNICIPAL', 'PREFEITURA MUNICIPAL', 'MUNICIPIO DE')))
     )
 
-def state_candidates(municipal_ids):
+def cnpj(value):
+    return re.sub(r'\D', '', str(value or ''))
+
+def api_json(path, query=None):
+    url = TRANSFEREGOV + path
+    if query:
+        url += '?' + urllib.parse.urlencode(query)
+    with request(url) as response:
+        payload = response.read(8_000_001)
+    if len(payload) > 8_000_000:
+        raise ValueError('Resposta do Transferegov maior que o limite da consulta')
+    return json.loads(payload)
+
+def api_pages(path, **filters):
+    count = None
+    result = []
+    for page in range(1, 31):
+        payload = api_json(path, filters | {'pagina':page, 'tamanho_da_pagina':100})
+        collection = payload['data']
+        total_pages = payload['total_pages']
+        total = payload['total_items']
+        if (not isinstance(collection, list) or total_pages > 30 or payload['page_number'] != page
+                or (count is not None and count != total)):
+            raise ValueError('Paginação inconsistente no Transferegov')
+        count = total
+        result.extend(collection)
+        if page >= total_pages:
+            if len(result) != count:
+                raise ValueError('Consulta incompleta no Transferegov')
+            return result
+    raise ValueError('Consulta do Transferegov ultrapassou o limite de páginas')
+
+def api_stamp(module):
+    raw = api_json(module+'/data-atualizacao')['data_ultima_atualizacao']
+    stamp = dt.datetime.fromisoformat(raw)
+    return (stamp if stamp.tzinfo else stamp.replace(tzinfo=ZoneInfo('America/Sao_Paulo'))).isoformat()
+
+def federal_proposals(directory):
+    columns = ('ID_PROPOSTA','COD_MUNIC_IBGE','NATUREZA_JURIDICA','IDENTIF_PROPONENTE',
+               'NM_PROPONENTE','NR_PROPOSTA','DESC_ORGAO','DESC_ORGAO_SUP','MODALIDADE','OBJETO_PROPOSTA')
+    try:
+        stamp = api_stamp('discricionarias')
+        by_id = {}
+        for code in (IBGE, IBGE[:-1]):
+            for row in api_pages('discricionarias/propostas', cod_munic_ibge=code):
+                normalized = {column: str(row.get(column.lower()) or '') for column in columns}
+                normalized['IDENTIF_PROPONENTE'] = cnpj(row.get('cd_identif_proponente'))
+                if normalized['COD_MUNIC_IBGE'] not in {IBGE, IBGE[:-1]}:
+                    raise ValueError('A consulta federal retornou outro município')
+                if normalized['ID_PROPOSTA'] and municipal_proposal(normalized):
+                    by_id[normalized['ID_PROPOSTA']] = normalized
+        if not by_id:
+            raise ValueError('API sem propostas municipais no recorte')
+        return by_id, stamp, 'api'
+    except (OSError, ValueError, KeyError, TypeError):
+        download(directory, 'proposta')
+        by_id = {p['ID_PROPOSTA']:p for p in rows(directory,'proposta',columns)
+                 if p['COD_MUNIC_IBGE'] in {IBGE, IBGE[:-1]} and municipal_proposal(p)}
+        if not by_id:
+            raise ValueError('Nenhuma proposta municipal encontrada no recorte do Transferegov')
+        return by_id, None, 'csv'
+
+def federal_fund_plans(municipal_ids):
+    result = {}
+    for beneficiary in sorted(municipal_ids):
+        for plan in api_pages('fundoafundo/planos-acao', cnpj_ente_recebedor_plano_acao=beneficiary):
+            if (cnpj(plan['cnpj_ente_recebedor_plano_acao']) != beneficiary
+                    or str(plan['codigo_ibge_municipio_ente_recebedor_plano_acao']) != IBGE):
+                continue
+            if amount(plan['valor_repasse_emenda_plano_acao']) != 0:
+                continue
+            if (plan['situacao_plano_acao'] != 'AUTORIZADO' or plan['id_ente_repassador_plano_acao']
+                    or not plan['nome_orgao_repassador_plano_acao']):
+                continue
+            plan_id = str(plan['id_plano_acao'])
+            if not re.fullmatch(r'\d{1,12}', plan_id):
+                raise ValueError('Identificador inesperado no Transferegov Fundo a Fundo')
+            linked_fund = cnpj(plan['cnpj_fundo_vinculado_plano_acao'])
+            fund_is_municipal = (len(linked_fund) == 14
+                and str(plan['codigo_ibge_fundo_vinculado_plano_acao']) == IBGE
+                and 'MUNICIPAL' in plain(plan['nome_fundo_vinculado_plano_acao']))
+            begin = date(plan['data_inicio_vigencia_plano_acao'])
+            result[plan_id] = {
+                'id':f'faf-{plan_id}', 'origin':'União', 'source':'Transferegov.br · Fundo a Fundo',
+                'number':str(plan['codigo_plano_acao']), 'agency':public_text(plan['nome_orgao_repassador_plano_acao']),
+                'recipient':public_text(plan['nome_fundo_vinculado_plano_acao'] if fund_is_municipal else plan['nome_ente_recebedor_plano_acao']),
+                'cnpj':linked_fund if fund_is_municipal else beneficiary,'type':'Plano de ação fundo a fundo',
+                'object':public_text(plan['objetivos_plano_acao'] or plan['diagnostico_plano_acao']),
+                'status':'Autorizado','year':int(begin[:4]) if begin else None,'start':begin,'end':date(plan['data_fim_vigencia_plano_acao']),
+                'total':amount(plan['valor_total_plano_acao']), 'transfer':amount(plan['valor_total_repasse_plano_acao']), 'paid':None,
+                'details':{'Fundo repassador':public_text(plan['nome_fundo_repassador_plano_acao']),
+                           'Valores':'Previsão do plano de ação. Desembolso e data de pagamento não foram apurados nesta fonte.'},
+                'link':TRANSFEREGOV+'fundoafundo/planos-acao?id_plano_acao='+plan_id,
+            }
+    return list(result.values()), api_stamp('fundoafundo')
+
+def state_agreements(municipal_ids):
+    municipal_names = {'PREFEITURA MUNICIPAL DE '+CITY, 'MUNICIPIO DE '+CITY, 'FUNDO MUNICIPAL DE SAUDE DE '+CITY}
     def query(key, value):
         found = []
-        stamp = None
         for page in range(1, 6):
-            body = {'page': page, 'pageSize': 100, 'totalItens': 0, key: value}
+            body = {'page':page, 'pageSize':100, 'totalItens':0, key:value}
             with request(STATE + '/Buscar', json.dumps(body).encode()) as res:
                 response = json.load(res)
             found.extend(response['items'])
-            stamp = response['ultimaAtualizacao']
             if not response.get('hasNext'):
-                return found, stamp
+                if len(found) != response['totalItems']:
+                    raise ValueError('Consulta de convênios estaduais incompleta')
+                return found, response['ultimaAtualizacao']
         raise ValueError('A consulta estadual ultrapassou o limite de páginas')
-    args = [('nomeBeneficiario', 'BERNARDO DO CAMPO'), *[('cnpjBeneficiario', cnpj) for cnpj in sorted(municipal_ids)]]
-    candidates = {}
+    args = [('nomeBeneficiario', 'BERNARDO DO CAMPO'), *[('cnpjBeneficiario', doc) for doc in sorted(municipal_ids)]]
+    agreements = {}
     source_date = None
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        for found, stamp in pool.map(lambda arg: query(*arg), args):
-            source_date = stamp or source_date
+        for found, stamp in pool.map(lambda arg:query(*arg), args):
+            if source_date and stamp != source_date:
+                raise ValueError('Fonte estadual mudou durante a consulta')
+            source_date = stamp
             for row in found:
-                if row.get('cnpjBeneficiario') in municipal_ids:
-                    candidates[row['numeroConvenio']] = row
-    return len(candidates), source_date
+                doc = cnpj(row.get('cnpjBeneficiario'))
+                name = clean(row.get('nomeBeneficiario'))
+                if doc not in municipal_ids and (doc or plain(name) not in municipal_names):
+                    continue
+                number = str(row['numeroConvenio'])
+                if not re.fullmatch(r'\d{6,16}',number):
+                    raise ValueError('Identificador de convênio estadual inesperado')
+                candidate = {
+                    'id':f'sp-convenio-{number}','origin':'Estado','source':'Portal da Transparência SP','number':number,
+                    'agency':public_text(row['orgaoCelebrante']),'agencyUnit':public_text(row['unidadeCelebrante']),
+                    'recipient':name,'cnpj':doc,'type':public_text(row['tipoInstrumentoJuridico']),'object':public_text(row['objeto']),
+                    'year':int(row['anoCelebracao']),'start':date(row['dtInicioVigenciaProxy']),'end':date(row['dtFimVigenciaProxy']),
+                    'total':amount(row['vlRecebidoTotal']),'granted':amount(row['vlLiquidadoTotal']),
+                    'amendment':'Não identificada','details':{},
+                    'link':row['linkDocumentoProxy'] if (row['linkDocumentoProxy'] or '').startswith(('https://demandas.spsempapel.sp.gov.br/','https://www.transparencia.sp.gov.br/')) else STATE,
+                }
+                if not doc:
+                    candidate['details']['Identificação da unidade'] = 'A fonte identifica o Município pelo nome e não preenche o CNPJ neste registro.'
+                previous = agreements.get(number)
+                if previous and (previous['total'],previous['granted']) != (candidate['total'],candidate['granted']):
+                    raise ValueError(f'Convênio estadual {number} com valores divergentes')
+                if not previous or (doc and not previous['cnpj']):
+                    agreements[number] = candidate
+    return list(agreements.values()), source_date
 
-def build(directory):
-    proposals = {}
-    for p in rows(directory, 'proposta', ['ID_PROPOSTA', 'COD_MUNIC_IBGE', 'NATUREZA_JURIDICA', 'IDENTIF_PROPONENTE']):
-        if p['COD_MUNIC_IBGE'] in {IBGE, IBGE[:-1]} and municipal_proposal(p):
-            proposals[p['ID_PROPOSTA']] = p
-    if not proposals:
-        raise ValueError('Nenhuma proposta municipal encontrada no recorte oficial')
-    municipal_ids = {p['IDENTIF_PROPONENTE'] for p in proposals.values()} | {CITY_ID}
+def build(directory, proposals):
+    municipal_ids = {p['IDENTIF_PROPONENTE'] for p in proposals.values()} | {CITY_ID, '13961905000170'}
     linked = {e['ID_PROPOSTA'] for e in rows(directory, 'emenda', ['ID_PROPOSTA', 'NR_EMENDA'], ('ID_PROPOSTA', proposals))}
     candidates = {}
     for c in rows(directory, 'convenio', ['NR_CONVENIO', 'ID_PROPOSTA', 'VL_DESEMBOLSADO_CONV'], ('ID_PROPOSTA', proposals)):
@@ -197,23 +313,30 @@ def metadata():
 def main(directory, output):
     version = metadata()
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        list(pool.map(lambda name: download(directory, name), FILES))
-    instruments, payments, ids = build(directory)
-    payments.extend(state_quotas())
-    try:
-        state_count, state_date = state_candidates(ids)
-    except (OSError, ValueError, KeyError):
-        state_count, state_date = None, None
+        list(pool.map(lambda name: download(directory, name), (name for name in FILES if name != 'proposta')))
+    proposals, proposal_date, proposal_mode = federal_proposals(directory)
+    instruments, payments, ids = build(directory, proposals)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        quotas = pool.submit(state_quotas)
+        agreed = pool.submit(state_agreements, ids)
+        funds = pool.submit(federal_fund_plans, ids)
+        payments.extend(quotas.result())
+        state_rows, state_date = agreed.result()
+        plans, fund_date = funds.result()
+    instruments.extend(state_rows)
+    instruments.extend(plans)
     if metadata() != version:
         raise RuntimeError('Arquivos mudaram durante a leitura. Execute uma nova carga.')
     output.parent.mkdir(parents=True, exist_ok=True)
-    data = {'generatedAt':dt.datetime.now(dt.timezone.utc).isoformat(), 'coverage':{'federalFiles':version,'stateUnverified':state_count,'stateUpdatedAt':state_date},
-            'instruments':sorted(instruments,key=lambda r:(r['signed'],r['number']),reverse=True),
+    data = {'schemaVersion':2, 'generatedAt':dt.datetime.now(dt.timezone.utc).isoformat(),
+            'coverage':{'federalFiles':version,'federalProposalMode':proposal_mode,'federalProposalUpdatedAt':proposal_date,
+                        'federalFundUpdatedAt':fund_date,'stateUpdatedAt':state_date},
+            'instruments':sorted(instruments,key=lambda r:(r.get('signed') or r.get('start',''),r['number']),reverse=True),
             'payments':sorted(payments,key=lambda r:(r.get('day',r.get('period','')),r['id']),reverse=True)}
     tmp = output.with_suffix('.part')
     tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     tmp.replace(output)
-    print(json.dumps({k:len(data[k]) for k in ('instruments','payments')} | {'stateUnverified':state_count}))
+    print(json.dumps({k:len(data[k]) for k in ('instruments','payments')} | {'stateAgreements':len(state_rows),'fundPlans':len(plans),'proposalMode':proposal_mode}))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -27,31 +27,40 @@ const labelList = {
   origin:'Origem', source:'Fonte oficial', number:'Nº do instrumento', agency:'Órgão concedente',
   recipient:'Unidade favorecida', cnpj:'CNPJ favorecido', object:'Objeto', type:'Modalidade',
   status:'Situação', year:'Exercício', signed:'Assinatura', start:'Início da vigência', end:'Fim da vigência',
-  total:'Valor global pactuado', transfer:'Repasse pactuado', counterpart:'Contrapartida pactuada',
+  total:'Valor global pactuado', transfer:'Repasse pactuado ou previsto', counterpart:'Contrapartida pactuada',
   paid:'Valor desembolsado', proposal:'Nº da proposta', process:'Nº do processo',
   day:'Data do repasse', period:'Competência', document:'Documento financeiro',
+  granted:'Valor concedido', amendment:'Origem parlamentar', agencyUnit:'Unidade celebrante',
 }
-const assets = [
-  {name:'Transferegov.br', info:'Convênios, contratos de repasse e demais instrumentos da base Discricionárias e Legais. A carga reúne proposta, instrumento, desembolsos, empenhos, aditivos, prorrogações e metas disponíveis.', url:'https://api-publica.transferegov.gestao.gov.br/downloads'},
-  {name:'Portal da Transparência de São Paulo', info:'A consulta estadual de convênios oferece cadastro, vigência, valor e documento quando disponível. O retorno consultado não identifica de forma conclusiva a origem parlamentar de cada instrumento.', url:'https://www.transparencia.sp.gov.br/Convenios'},
-  {name:'Fundo Nacional de Saúde', info:'A consulta detalhada do FNS publica repasses próprios, inclusive ao Fundo Municipal de Saúde. Essa base tem cobertura independente do Transferegov.', url:'https://consultafns.saude.gov.br/'},
-  {name:'Tesouro Nacional', info:'Séries e API oficiais de transferências constitucionais e legais, com modalidades como FPM. As séries têm cobertura independente dos convênios.', url:'https://www.tesourotransparente.gov.br/ckan/dataset/api-de-transferencias-constitucionais'},
-  {name:'Transferegov Fundo a Fundo', info:'Documentação dos planos de ação, termos de adesão e execução do módulo federal. A cobertura depende dos programas participantes.', url:'https://api-publica.transferegov.gestao.gov.br/fundoafundo/docs'},
-  {name:'Sefaz-SP', info:'Consultas estaduais de quotas-partes municipais, entre elas ICMS, IPVA e IPI Exportação.', url:'https://portal.fazenda.sp.gov.br/acessoinformacao/Paginas/Transfer%C3%AAncias-Constitucionais-a-Municipios.aspx'},
-]
-const schema = {
-  instruments:['origin','number','agency','recipient','cnpj','type','object','status','year','signed','start','end','total','transfer','counterpart','paid','proposal','process','source'],
-  payments:['origin','period','day','number','document','agency','recipient','cnpj','type','object','year','paid','source'],
+const areas = {
+  federal: {
+    name:'Federal', heading:'Recursos federais',
+    description:'Convênios, contratos de repasse, planos fundo a fundo e desembolsos da União para São Bernardo do Campo.',
+    help:'O Transferegov publica propostas e planos fundo a fundo em APIs. Convênios e desembolsos são cruzados com os arquivos oficiais do mesmo portal. O recorte federal exclui instrumentos com vínculo parlamentar identificado.',
+    names:{instruments:'Instrumentos e planos',payments:'Desembolsos'},
+    subtitles:{instruments:'Consulte convênios, contratos de repasse e planos fundo a fundo. Veja os valores pactuados ou previstos em cada instrumento.',payments:'Consulte os desembolsos federais por instrumento e documento financeiro.'},
+    fields:{
+      instruments:['number','agency','recipient','cnpj','type','object','status','year','signed','start','end','total','transfer','counterpart','paid','proposal','process','source'],
+      payments:['period','day','number','document','agency','recipient','cnpj','type','object','year','paid','source'],
+    },
+    defaults:{instruments:['number','agency','recipient','object','status','transfer','paid'],payments:['period','day','number','recipient','object','paid']},
+    filters:{instruments:['year','recipient','type','status','source'],payments:['year','recipient','type','agency']},
+  },
+  estadual: {
+    name:'Estadual', heading:'Recursos estaduais',
+    description:'Convênios do Estado de São Paulo e quotas-partes repassadas a São Bernardo do Campo.',
+    help:'Os convênios estaduais entram nos totais. A consulta pública estadual não distingue, registro a registro, quais têm origem parlamentar.',
+    names:{instruments:'Convênios',payments:'Quotas-partes'},
+    subtitles:{instruments:'Consulte convênios estaduais, seus valores previstos e concedidos e a vigência.',payments:'Consulte ICMS, IPVA, IPI Exportação e compensação financeira por competência.'},
+    fields:{
+      instruments:['number','agency','agencyUnit','recipient','cnpj','type','object','amendment','year','start','end','total','granted','source'],
+      payments:['period','agency','recipient','cnpj','type','object','year','paid','source'],
+    },
+    defaults:{instruments:['number','agency','recipient','object','year','total','granted','amendment'],payments:['period','object','recipient','paid']},
+    filters:{instruments:['year','agency','recipient','amendment'],payments:['year','period','object']},
+  },
 }
-const defaults = {
-  instruments:['origin','number','agency','recipient','object','status','paid'],
-  payments:['origin','period','day','number','recipient','object','paid'],
-}
-const quickFields = {
-  instruments:['year','origin','recipient','type','status'],
-  payments:['year','origin','recipient','type','source'],
-}
-const amounts = new Set(['total','transfer','counterpart','paid'])
+const amounts = new Set(['total','transfer','counterpart','paid','granted'])
 const dates = new Set(['signed','start','end','day'])
 const wide = new Set(['recipient','object','agency'])
 const absent = value => value === undefined || value === null || value === ''
@@ -62,24 +71,40 @@ const textValue = (key,value) => {
   if (key === 'cnpj' && /^\d{14}$/.test(value)) return value.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
   return String(value)
 }
-const initial = key => ({q:'', fields:new Map(), sort:key === 'instruments'?'signed':'period', direction:-1, columns:[...defaults[key]], page:0, size:15})
-const state = {table:'instruments', exportTable:'instruments', data:null, error:false,
-  grids:{instruments:initial('instruments'),payments:initial('payments')},
-  order:{instruments:[...defaults.instruments],payments:[...defaults.payments]}}
+const tableTypes = ['instruments','payments']
+const initial = (area,type) => ({
+  q:'', fields:new Map(), sort:type==='instruments'?'year':'period',
+  direction:-1, columns:[...areas[area].defaults[type]], page:0, size:15,
+})
+const state = {
+  area:'federal', data:null, error:false,
+  workspaces:Object.fromEntries(Object.entries(areas).map(([area,config])=>[area,{
+    table:'instruments', exportTable:'instruments', exportScope:'filtered',
+    grids:Object.fromEntries(tableTypes.map(type=>[type,initial(area,type)])),
+    order:Object.fromEntries(tableTypes.map(type=>[type,[...config.defaults[type]]])),
+  }])),
+}
+const workspace = () => state.workspaces[state.area]
+const areaConfig = () => areas[state.area]
+const rows = (key,area=state.area) => state.data?.groups[area][key] || []
+const columnLabel = key => state.area==='estadual' && key==='paid'?'Valor da quota-parte':labelList[key]
 try {
-  const saved = JSON.parse(localStorage.getItem('recursos-excel-v1') || '{}')
-  for (const type of Object.keys(schema)) {
-    if (Array.isArray(saved[type])) state.order[type] = [...new Set(saved[type].filter(f => schema[type].includes(f)))]
+  const current = JSON.parse(localStorage.getItem('recursos-excel-v2') || 'null')
+  const saved = current || {federal:JSON.parse(localStorage.getItem('recursos-excel-v1') || '{}')}
+  for (const [area,config] of Object.entries(areas)) for (const type of tableTypes) {
+    if (Array.isArray(saved[area]?.[type])) {
+      const chosen = [...new Set(saved[area][type].filter(key=>config.fields[type].includes(key)))]
+      if (chosen.length || saved[area][type].length===0) state.workspaces[area].order[type]=chosen
+    }
   }
 } catch {}
-const rows = key => state.data?.[key] || []
 const keyFor = value => absent(value) ? null : value
 const withTerm = (list, query) => {
   const words = norm(query).trim().split(/\s+/).filter(Boolean)
   return words.length ? list.filter(r => words.every(term => r.search.includes(term))) : list
 }
 function filtered(type, ignored) {
-  const config = state.grids[type]
+  const config = workspace().grids[type]
   return withTerm(rows(type),config.q).filter(row => {
     for (const [key,values] of config.fields) {
       if (key !== ignored && !values.has(keyFor(row[key]))) return false
@@ -88,7 +113,7 @@ function filtered(type, ignored) {
   })
 }
 function ordered(type, source) {
-  const {sort,direction} = state.grids[type]
+  const {sort,direction} = workspace().grids[type]
   return [...source].sort((a,b) => {
     const x = a[sort], y = b[sort]
     if (absent(x)) return absent(y)?0:1
@@ -97,16 +122,21 @@ function ordered(type, source) {
   })
 }
 function setStats() {
-  const type = state.table
+  const type = workspace().table
   const list = filtered(type)
   const formatCount = num => state.data ? integer.format(num) : '—'
   const sum = (items, key) => items.some(i => typeof i[key]==='number') ? currency.format(items.reduce((out,i) => out+(i[key]||0),0)/100) : '—'
-  const stats = [
-    [type === 'instruments' ? 'Instrumentos' : 'Repasses',formatCount(list.length),'Registros no recorte'],
-    ['Unidades favorecidas',formatCount(new Set(list.map(i => i.cnpj || i.recipient).filter(Boolean)).size),'Município e unidades identificadas'],
-    [type === 'instruments' ? 'Pactuado · repasse' : 'Origens com registros',type === 'instruments' ? sum(list,'transfer') : formatCount(new Set(list.map(i=>i.origin)).size),type === 'instruments'?'Parcela prevista do concedente':'União e Estado, conforme a cobertura'],
-    [type === 'instruments'?'Desembolsado':'Valor informado',sum(list,'paid'),type === 'instruments'?'Acumulado nos instrumentos do recorte':'Confira a base de cálculo na ficha'],
-  ]
+  const namesById = new Map(list.filter(i=>i.cnpj).map(i=>[norm(i.recipient),i.cnpj]))
+  const count = [areaConfig().names[type],formatCount(list.length),'Registros no recorte']
+  const recipients = ['Unidades favorecidas',formatCount(new Set(list.map(i=>i.cnpj || namesById.get(norm(i.recipient)) || norm(i.recipient)).filter(Boolean)).size),'Município e unidades identificadas']
+  const stats = type==='instruments'
+    ? state.area==='estadual'
+      ? [count,recipients,['Valor total dos convênios',sum(list,'total'),'Previsto nos instrumentos do recorte'],['Valor concedido',sum(list,'granted'),'Repassado segundo o Portal da Transparência SP']]
+      : [count,recipients,['Repasse pactuado ou previsto',sum(list,'transfer'),'Inclui os planos fundo a fundo'],['Desembolsado',sum(list,'paid'),'Valores informados para os instrumentos']]
+    : [count,recipients,['Competências',formatCount(new Set(list.map(i=>i.period).filter(Boolean)).size),'Meses com registro no recorte'],[
+      state.area==='estadual'?'Total das quotas-partes':'Total desembolsado',sum(list,'paid'),
+      state.area==='estadual'?'Valores conforme a base indicada na ficha':'Desembolsos do recorte',
+    ]]
   $('stats').replaceChildren(...stats.map(([title,value,subtitle]) => {
     const stat = element('article',undefined,'stat')
     stat.append(element('span',title),element('strong',value),element('small',subtitle))
@@ -120,10 +150,10 @@ function table(cols, list, type, actionable) {
   for (const k of cols) {
     const th = element('th')
     th.scope = 'col'
-    th.textContent = labelList[k]
+    th.textContent = columnLabel(k)
     if (actionable) {
-      const config = state.grids[type]
-      const sort = button(labelList[k], () => {
+      const config = workspace().grids[type]
+      const sort = button(columnLabel(k), () => {
         config.direction = config.sort === k ? -config.direction : (k === 'period' || dates.has(k) || amounts.has(k) || k === 'year' ? -1 : 1)
         config.sort = k
         config.page = 0
@@ -156,8 +186,8 @@ function table(cols, list, type, actionable) {
   return t
 }
 function renderResults() {
-  const type = state.table
-  const config = state.grids[type]
+  const type = workspace().table
+  const config = workspace().grids[type]
   const list = ordered(type,filtered(type))
   const n = list.length
   const pages = Math.max(1,Math.ceil(n/config.size))
@@ -189,8 +219,8 @@ function closePeers(active) {
   for (const d of document.querySelectorAll('.facet[open], .columns[open]')) if (d!==active) d.open = false
 }
 function populateFacet(panel,key,query) {
-  const type = state.table
-  const config = state.grids[type]
+  const type = workspace().table
+  const config = workspace().grids[type]
   const selected = config.fields.get(key) || new Set()
   const counts = new Map()
   for (const row of filtered(type,key)) {
@@ -224,12 +254,12 @@ function populateFacet(panel,key,query) {
 function facet(k) {
   const detail = element('details',undefined,'facet')
   detail.dataset.field = k
-  const summary = element('summary',labelList[k])
+  const summary = element('summary',columnLabel(k))
   const pop = element('div',undefined,'popover')
   const search = element('input')
   search.type='search'
   search.placeholder='Procurar opção'
-  search.setAttribute('aria-label',`Procurar em ${labelList[k]}`)
+  search.setAttribute('aria-label',`Procurar em ${columnLabel(k)}`)
   search.addEventListener('input',()=>populateFacet(pop,k,search.value))
   pop.append(search,element('div'))
   detail.append(summary,pop)
@@ -239,20 +269,20 @@ function facet(k) {
 function updateFacetLabels() {
   for (const d of document.querySelectorAll('.facet')) {
     const key = d.dataset.field
-    const n = state.grids[state.table].fields.get(key)?.size || 0
+    const n = workspace().grids[workspace().table].fields.get(key)?.size || 0
     d.dataset.active = String(n>0)
-    d.firstChild.textContent = labelList[key]+(n?` · ${n}`:'')
+    d.firstChild.textContent = columnLabel(key)+(n?` · ${n}`:'')
   }
 }
 function renderChips() {
-  const config = state.grids[state.table]
+  const config = workspace().grids[workspace().table]
   const chips = $('chips')
   chips.replaceChildren()
   let count = 0
   for (const [k,values] of config.fields) {
     count += values.size
     for (const value of values) {
-      chips.append(button(`${labelList[k]} · ${value===null?'Não informado':textValue(k,value)} ×`,()=>{
+      chips.append(button(`${columnLabel(k)} · ${value===null?'Não informado':textValue(k,value)} ×`,()=>{
         values.delete(value)
         if (!values.size) config.fields.delete(k)
         config.page=0
@@ -275,12 +305,12 @@ function renderChips() {
   $('filter-count').textContent = count ? `(${count})` : ''
 }
 function renderColumns() {
-  const type = state.table
-  const config = state.grids[type]
+  const type = workspace().table
+  const config = workspace().grids[type]
   const parent = $('column-options')
   parent.replaceChildren()
   parent.append(button('Restaurar colunas',()=>{config.columns=[...defaults[type]];renderColumns();renderResults()},'link-button'))
-  for (const key of schema[type]) {
+  for (const key of areaConfig().fields[type]) {
     const label = element('label')
     const input = element('input')
     input.type='checkbox'
@@ -290,20 +320,23 @@ function renderColumns() {
       if (input.checked) chosen.add(key)
       else if (chosen.size > 1) chosen.delete(key)
       else input.checked=true
-      config.columns=schema[type].filter(k=>chosen.has(k))
+      config.columns=areaConfig().fields[type].filter(k=>chosen.has(k))
       renderResults()
     })
-    label.append(input,element('span',labelList[key]))
+    label.append(input,element('span',columnLabel(key)))
     parent.append(label)
   }
 }
 function renderTable() {
-  const type = state.table
-  for (const b of document.querySelectorAll('[data-table]')) b.setAttribute('aria-pressed',String(b.dataset.table===type))
-  $('table-definition').textContent = type==='instruments' ? 'Acompanhe valores pactuados, vigência e situação de cada instrumento.' : 'Consulte desembolsos por instrumento e quotas-partes estaduais por competência.'
-  $('q').value=state.grids[type].q
-  $('quick').replaceChildren(...quickFields[type].map(facet))
-  $('filters').replaceChildren(...schema[type].filter(k=>!quickFields[type].includes(k)).map(facet))
+  const type = workspace().table
+  for (const b of document.querySelectorAll('[data-table]')) {
+    b.textContent = areaConfig().names[b.dataset.table]
+    b.setAttribute('aria-pressed',String(b.dataset.table===type))
+  }
+  $('table-definition').textContent = areaConfig().subtitles[type]
+  $('q').value=workspace().grids[type].q
+  $('quick').replaceChildren(...areaConfig().filters[type].map(facet))
+  $('filters').replaceChildren(...areaConfig().fields[type].filter(k=>!areaConfig().filters[type].includes(k)).map(facet))
   $('columns').open=false
   renderColumns()
   updateFacetLabels()
@@ -312,14 +345,14 @@ function renderTable() {
 function openDetail(row,type) {
   const d = $('detail')
   $('detail-source').textContent = `${row.origin} · ${row.source}`
-  $('detail-title').textContent = type==='instruments' ? `Instrumento ${row.number}` : `Repasse ${row.document || row.number || row.object || ''}`
+  $('detail-title').textContent = type==='instruments' ? `${row.origin==='Estado'?'Convênio':row.id.startsWith('faf-')?'Plano de ação':'Instrumento'} ${row.number}` : `Repasse ${row.document || row.number || row.object || ''}`
   const fields = element('dl',undefined,'dialog-grid')
   function field(label,value, full=false) {
     const node = element('div',undefined,full?'full':'')
     node.append(element('dt',label),element('dd',value))
     fields.append(node)
   }
-  for (const k of schema[type]) if (k!=='object') field(labelList[k],textValue(k,row[k]))
+  for (const k of areaConfig().fields[type]) if (k!=='object') field(columnLabel(k),textValue(k,row[k]))
   if (!absent(row.object)) field('Objeto',row.object,true)
   for (const [label,value] of Object.entries(row.details || {})) {
     if (!absent(value)) field(label,/^\d{4}-\d{2}-\d{2}$/.test(value)?textValue('day',value):String(value))
@@ -338,7 +371,7 @@ function openDetail(row,type) {
     if (i) content.append(button('Ver instrumento',()=>openDetail(i,'instruments')))
   }
   const sections = {...row.sections}
-  if (type==='instruments') {
+  if (type==='instruments' && state.area==='federal') {
     sections.Repasses = rows('payments').filter(x=>x.instrumentId===row.id).map(x=>({Data:textValue('day',x.day),Documento:x.document,Valor:x.paid}))
   }
   for (const [name,list] of Object.entries(sections)) {
@@ -366,9 +399,9 @@ function openDetail(row,type) {
   if (!d.open) d.showModal()
 }
 function saveExcel() {
-  try { localStorage.setItem('recursos-excel-v1',JSON.stringify(state.order)) } catch {}
+  try { localStorage.setItem('recursos-excel-v2',JSON.stringify(Object.fromEntries(Object.entries(state.workspaces).map(([area,config])=>[area,config.order])))) } catch {}
 }
-const exportRows = () => ordered(state.exportTable,$('export-scope').value==='all'?rows(state.exportTable):filtered(state.exportTable))
+const exportRows = () => ordered(workspace().exportTable,workspace().exportScope==='all'?rows(workspace().exportTable):filtered(workspace().exportTable))
 function renderColumnOrder(list, fields, onMove, {tag = 'li', locked = false} = {}) {
   const disabled = locked || fields.length < 2;
   const handles = [];
@@ -497,58 +530,69 @@ function renderColumnOrder(list, fields, onMove, {tag = 'li', locked = false} = 
 }
 
 function renderExcel() {
-  const type = state.exportTable
+  const type = workspace().exportTable
   const list = exportRows()
-  const fields = state.order[type]
+  const fields = workspace().order[type]
+  for (const option of $('export-table').options) option.textContent=areaConfig().names[option.value]
   $('export-table').value=type
+  $('export-scope').value=workspace().exportScope
   const fieldList = $('excel-fields')
   fieldList.className = 'field-list'
   fieldList.replaceChildren()
-  for (const key of schema[type]) {
+  for (const key of areaConfig().fields[type]) {
     const label = element('label')
     const input = element('input')
     input.type='checkbox'
     input.checked=fields.includes(key)
     input.addEventListener('change',()=>{
-      state.order[type] = input.checked?[...fields,key]:fields.filter(f=>f!==key)
+      workspace().order[type] = input.checked?[...fields,key]:fields.filter(f=>f!==key)
       saveExcel()
       renderExcel()
-      const focus = fieldList.querySelectorAll('input')[schema[type].indexOf(key)]
+      const focus = fieldList.querySelectorAll('input')[areaConfig().fields[type].indexOf(key)]
       focus?.focus()
     })
-    label.append(input,element('span',labelList[key]))
+    label.append(input,element('span',columnLabel(key)))
     fieldList.append(label)
   }
   $('excel-count').textContent=`${fields.length} colunas · ${list.length} registros`
-  renderColumnOrder($('export-order'), fields.map(key => [key,labelList[key]]), next => {
-    state.order[type] = next
+  renderColumnOrder($('export-order'), fields.map(key => [key,columnLabel(key)]), next => {
+    workspace().order[type] = next
     saveExcel()
     renderExcel()
   }, {tag: 'div'})
   $('download').disabled = !fields.length || !list.length
   $('export-preview').replaceChildren(fields.length&&list.length?table(fields,list.slice(0,8),type,false):element('p','Selecione colunas e aplique um recorte com registros.','empty'))
 }
+const sources = [
+  ['Transferegov.br · Discricionárias e Legais','https://api-publica.transferegov.gestao.gov.br/discricionarias/docs','Propostas consultadas pela API. Convênios, contratos de repasse, desembolsos, empenhos, aditivos, prorrogações e metas cruzados com os arquivos oficiais do Transferegov.','federalProposalUpdatedAt'],
+  ['Transferegov.br · Fundo a Fundo','https://api-publica.transferegov.gestao.gov.br/fundoafundo/docs','Planos de ação autorizados, sem parcela de emenda identificada. O valor do plano representa a previsão de repasse.','federalFundUpdatedAt'],
+  ['Portal da Transparência de São Paulo','https://www.transparencia.sp.gov.br/Convenios','Convênios e transferências para o Município e unidades identificadas. A base informa valor total e valor concedido.','stateUpdatedAt'],
+  ['Sefaz-SP','https://portal.fazenda.sp.gov.br/acessoinformacao/Paginas/Transfer%C3%AAncias-Constitucionais-a-Municipios.aspx','Quotas-partes municipais desde 2020, com as bases de cálculo publicadas pela Sefaz-SP.'],
+]
 function renderSource() {
-  const data = state.data
-  const dates = Object.values(data?.coverage?.federalFiles || {}).map(v=>Date.parse(v)).filter(Number.isFinite)
-  const federal = dates.length ? Math.max(...dates) : null
-  const n = data?.coverage?.stateUnverified
-  const published = Date.parse(data?.generatedAt)
-  $('portal-update').textContent = Number.isFinite(published) ? 'Última carga publicada em '+dateTime.format(published)+' · Atualização diária programada às 11h23, horário de São Paulo.' : ''
-  $('hero-status').textContent = !data ? state.error?'Base indisponível':'Consultando fontes' : 'Cobertura parcial'
-  $('coverage-help').hidden = !data
-  $('hero-date').textContent = federal ? 'Arquivos federais de '+dateTime.format(federal) : state.error?'Tente novamente em instantes.':'Aguarde o carregamento'
-  const labels = [
-    data ? `Integrada · ${rows('instruments').filter(r=>r.source==='Transferegov.br').length} instrumentos` : 'Base de instrumentos',
-    n===undefined || n===null?'Consulta oficial · classificação pendente':`${n} candidatos estaduais · classificação pendente`,
-    'Consulta oficial · cobertura complementar','API oficial · cobertura complementar',
-    'API oficial · cobertura complementar',data ? `Integrada · ${rows('payments').filter(r=>r.source==='Sefaz-SP').length} registros desde 2020` : 'Consulta oficial · quotas-partes',
+  const data=state.data
+  const coverage=data?.coverage
+  const files=Object.values(coverage?.federalFiles||{}).map(v=>Date.parse(v)).filter(Number.isFinite)
+  const sourceDate=state.area==='federal'?(files.length?Math.max(...files):NaN):Date.parse(coverage?.stateUpdatedAt)
+  const published=Date.parse(data?.generatedAt)
+  $('portal-update').textContent=Number.isFinite(published)?'Última carga publicada em '+dateTime.format(published)+' · Atualização programada às 11h23, horário de São Paulo.':''
+  $('hero-status').textContent=data?(state.area==='federal'?'Transferegov.br':'Portais oficiais de São Paulo'):state.error?'Base indisponível':'Consultando fontes'
+  $('coverage-help').hidden=!data
+  $('coverage-tooltip').textContent=areaConfig().help
+  $('hero-date').textContent=Number.isFinite(sourceDate)?(state.area==='federal'?'Arquivos federais de ':'Convênios estaduais atualizados em ')+dateTime.format(sourceDate):state.error?'Tente novamente em instantes.':'Data da fonte indisponível'
+  const counts=[
+    rows('instruments','federal').filter(r=>r.source==='Transferegov.br').length,
+    rows('instruments','federal').filter(r=>r.source==='Transferegov.br · Fundo a Fundo').length,
+    rows('instruments','estadual').length,rows('payments','estadual').length,
   ]
-  $('sources').replaceChildren(...assets.map((entry,idx)=>{
+  const labels=['instrumentos','planos de ação','convênios','registros de quotas-partes']
+  $('sources').replaceChildren(...sources.map(([name,url,notes,stamp],i)=>{
     const card=element('article',undefined,'source-box')
-    card.append(element('p',labels[idx],'coverage'),element('h2',entry.name),element('p',entry.info))
-    if (idx === 1 && data?.coverage?.stateUpdatedAt) card.append(element('p','Atualização informada pelo Estado em '+dateTime.format(new Date(data.coverage.stateUpdatedAt))+'.'))
-    const a=link('Consultar fonte oficial',entry.url)
+    const info=i===0&&coverage?.federalProposalMode==='csv'?notes.replace('Propostas consultadas pela API.','Propostas lidas dos arquivos oficiais do Transferegov nesta carga.'):notes
+    card.append(element('p',data?integer.format(counts[i])+' '+labels[i]:'Fonte oficial','coverage'),element('h2',name),element('p',info))
+    const date=Date.parse(coverage?.[stamp])
+    if (Number.isFinite(date)) card.append(element('p','Atualização na fonte em '+dateTime.format(date)+'.'))
+    const a=link('Consultar fonte oficial',url)
     a.target='_blank'
     a.rel='noopener noreferrer'
     card.append(a)
@@ -556,27 +600,45 @@ function renderSource() {
   }))
 }
 function viewName() {
-  const hash = location.hash.slice(1)
-  return ['excel','fontes'].includes(hash)?hash:'consulta'
+  const hash=location.hash.slice(1)
+  if (hash==='fontes') return 'fontes'
+  return hash==='excel'||hash.endsWith('-excel')?'excel':'consulta'
 }
-let lastView
+let lastRoute
 function renderView() {
-  const view = viewName()
+  const view=viewName()
+  const hash=location.hash.slice(1)
+  if (view!=='fontes') state.area=hash.startsWith('estadual')?'estadual':'federal'
+  const route=state.area+'/'+view
   for (const node of document.querySelectorAll('.view')) node.hidden=node.id!==view
-  for (const nav of document.querySelectorAll('[data-view]')) {
-    if (nav.dataset.view===view) nav.setAttribute('aria-current','page')
+  $('area-menu').hidden=view==='fontes'
+  $('area-menu').setAttribute('aria-label','Opções da aba '+areaConfig().name)
+  for (const nav of document.querySelectorAll('[data-area], [data-view]')) {
+    if (view==='fontes'?nav.dataset.view==='fontes':nav.dataset.area===state.area) nav.setAttribute('aria-current','page')
     else nav.removeAttribute('aria-current')
   }
+  for (const [id,section,url] of [['consult-link','consulta',state.area],['excel-link','excel',state.area+'-excel']]) {
+    const nav=$(id)
+    nav.href='#'+url
+    if (section===view) nav.setAttribute('aria-current','page')
+    else nav.removeAttribute('aria-current')
+  }
+  $('configure-excel').href='#'+state.area+'-excel'
+  $('area-heading').textContent=areaConfig().heading
+  $('area-intro').textContent=areaConfig().description
+  $('excel-area').textContent=areaConfig().name.toUpperCase()+' · EXPORTAÇÃO'
+  if (view==='consulta') renderTable()
   if (view==='excel') {
-    if (lastView==='consulta') state.exportTable=state.table
+    if (lastRoute===state.area+'/consulta') workspace().exportTable=workspace().table
     $('export-message').textContent=''
     renderExcel()
   }
-  if (lastView && lastView!==view) window.scrollTo(0,0)
-  lastView=view
+  renderSource()
+  if (lastRoute && route!==lastRoute) window.scrollTo(0,0)
+  lastRoute=route
 }
 $('q').addEventListener('input',()=>{
-  const config=state.grids[state.table]
+  const config=workspace().grids[workspace().table]
   config.q=$('q').value
   config.page=0
   closePeers()
@@ -590,21 +652,21 @@ $('filters-toggle').addEventListener('click',()=>{
 $('columns').addEventListener('toggle',()=>{if($('columns').open)closePeers($('columns'))})
 document.addEventListener('click',event=>{if(!event.target.closest('.facet,.columns'))closePeers()})
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('detail').open)closePeers()})
-for (const b of document.querySelectorAll('[data-table]')) b.addEventListener('click',()=>{state.table=b.dataset.table;renderTable()})
-$('export-table').addEventListener('change',()=>{state.exportTable=$('export-table').value;renderExcel()})
-$('export-scope').addEventListener('change',renderExcel)
-$('select-all').addEventListener('click',()=>{state.order[state.exportTable]=[...schema[state.exportTable]];saveExcel();renderExcel()})
-$('deselect-all').addEventListener('click',()=>{state.order[state.exportTable]=[];saveExcel();renderExcel()})
+for (const b of document.querySelectorAll('[data-table]')) b.addEventListener('click',()=>{workspace().table=b.dataset.table;renderTable()})
+$('export-table').addEventListener('change',()=>{workspace().exportTable=$('export-table').value;renderExcel()})
+$('export-scope').addEventListener('change',()=>{workspace().exportScope=$('export-scope').value;renderExcel()})
+$('select-all').addEventListener('click',()=>{workspace().order[workspace().exportTable]=[...areaConfig().fields[workspace().exportTable]];saveExcel();renderExcel()})
+$('deselect-all').addEventListener('click',()=>{workspace().order[workspace().exportTable]=[];saveExcel();renderExcel()})
 $('download').addEventListener('click',()=>{
-  const type=state.exportTable
-  const fields=state.order[type]
+  const type=workspace().exportTable
+  const fields=workspace().order[type]
   const list=exportRows()
   if (!fields.length || !list.length) return
-  const selected=fields.map(k=>({key:k,label:labelList[k],type:amounts.has(k)?'money':dates.has(k)?'date':'text'}))
-  const blob=makeWorkbook(selected,list,type==='instruments'?'Instrumentos':'Repasses')
+  const selected=fields.map(k=>({key:k,label:columnLabel(k),type:amounts.has(k)?'money':dates.has(k)?'date':'text'}))
+  const blob=makeWorkbook(selected,list,areaConfig().names[type])
   const url=URL.createObjectURL(blob)
   const a=link('',url)
-  a.download=`recursos-recebidos-${type==='instruments'?'instrumentos':'repasses'}.xlsx`
+  a.download=`recursos-recebidos-${state.area}-${norm(areaConfig().names[type]).replaceAll(' ','-')}.xlsx`
   document.body.append(a)
   a.click()
   a.remove()
@@ -634,18 +696,21 @@ function closeCoverage() {
 document.addEventListener('click',event => { if (!coverageHelp.contains(event.target)) closeCoverage() })
 document.addEventListener('keydown',event => { if (event.key === 'Escape') closeCoverage() })
 window.addEventListener('hashchange',() => { closeCoverage(); renderView() })
-renderTable()
 renderView()
-renderSource()
 try {
   const response=await fetch('/api/dados')
   if (!response.ok) throw new Error('Falha na consulta')
   const data=await response.json()
   if (!Array.isArray(data.instruments) || !Array.isArray(data.payments) || !data.coverage) throw new Error('Formato inválido')
-  for (const type of Object.keys(schema)) for (const row of data[type]) row.search=norm(schema[type].map(key=>`${row[key]??''} ${textValue(key,row[key])}`).join(' '))
-  state.data=data
+  const groups={federal:{instruments:[],payments:[]},estadual:{instruments:[],payments:[]}}
+  for (const type of tableTypes) for (const row of data[type]) {
+    const area=row.origin==='Estado'?'estadual':row.origin==='União'?'federal':null
+    if (!area) continue
+    row.search=norm(areas[area].fields[type].map(key=>`${row[key]??''} ${textValue(key,row[key])}`).join(' '))
+    groups[area][type].push(row)
+  }
+  state.data={...data,groups}
 } catch {
   state.error=true
 }
-renderSource()
-renderResults()
+renderView()
