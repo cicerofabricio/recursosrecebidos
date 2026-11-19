@@ -24,7 +24,9 @@
 <section id="consulta" class="view">
   <div class="hero">
     <div><p class="eyebrow">SÃO BERNARDO DO CAMPO · SP</p><h1>Recursos recebidos</h1><p class="intro">Consulte convênios, instrumentos e repasses da União e do Estado ao Município e às suas unidades. As emendas parlamentares têm consulta própria.</p></div>
-    <div class="hero-panel"><span class="hero-label">BASES OFICIAIS</span><strong id="hero-status">Consultando fontes</strong><small id="hero-date" aria-live="polite">Aguarde o carregamento</small><a href="#fontes">Ver cobertura das fontes</a></div>
+    <div class="hero-panel"><span class="hero-label">BASES OFICIAIS</span><div class="coverage-label"><strong id="hero-status">Consultando fontes</strong>
+      <span id="coverage-help" class="coverage-help" hidden><button id="coverage-toggle" type="button" aria-label="Por que a cobertura é parcial?" aria-controls="coverage-tooltip" aria-describedby="coverage-tooltip" aria-expanded="false">?</button>
+      <span id="coverage-tooltip" role="tooltip" hidden>Os convênios estaduais ficaram fora dos totais porque a consulta pública estadual não distingue, registro a registro, quais têm origem parlamentar.</span></span></div><small id="hero-date" aria-live="polite">Aguarde o carregamento</small><a href="#fontes">Ver cobertura das fontes</a></div>
   </div>
   <div id="stats" class="stats" aria-label="Totais do recorte"></div>
   <section class="workspace" aria-labelledby="table-title">
@@ -48,7 +50,7 @@
   <section class="workspace excel-box">
     <div class="workspace-head"><div><h2>Configurar planilha</h2><p>A prévia acompanha a ordem das colunas e o recorte selecionado.</p></div><button id="download" type="button" class="btn primary">Baixar .xlsx</button></div>
     <div class="excel-settings"><label>Tabela <select id="export-table"><option value="instruments">Instrumentos</option><option value="payments">Repasses</option></select></label><label>Registros <select id="export-scope"><option value="filtered">Resultados filtrados</option><option value="all">Todos os registros da tabela</option></select></label></div>
-    <div class="excel-grid"><section><h3>Campos disponíveis</h3><div class="field-actions"><button id="select-all" class="link-button" type="button">Selecionar todos</button><button id="deselect-all" class="link-button" type="button">Limpar seleção</button></div><div id="excel-fields"></div></section><section><h3>Ordem das colunas</h3><p id="excel-count" class="muted"></p><div id="export-order"></div></section></div>
+    <div class="excel-grid"><section><h3>Campos disponíveis</h3><div class="field-actions"><button id="select-all" class="link-button" type="button">Selecionar todos</button><button id="deselect-all" class="link-button" type="button">Limpar seleção</button></div><div id="excel-fields"></div></section><section><h3>Ordem das colunas</h3><p id="excel-count" class="muted"></p><p id="column-order-help" class="muted">Arraste pela alça. Pelo teclado, use as setas, Home ou End.</p><div id="export-order"></div><span id="column-order-status" class="column-order-status" role="status"></span></section></div>
     <h3>Prévia</h3><div id="export-preview" class="grid" tabindex="0" aria-label="Prévia da planilha"></div>
     <p id="export-message" class="muted" aria-live="polite"></p>
   </section>

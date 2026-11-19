@@ -369,6 +369,133 @@ function saveExcel() {
   try { localStorage.setItem('recursos-excel-v1',JSON.stringify(state.order)) } catch {}
 }
 const exportRows = () => ordered(state.exportTable,$('export-scope').value==='all'?rows(state.exportTable):filtered(state.exportTable))
+function renderColumnOrder(list, fields, onMove, {tag = 'li', locked = false} = {}) {
+  const disabled = locked || fields.length < 2;
+  const handles = [];
+  const rows = fields.map(([key, label], index) => {
+    const row = document.createElement(tag);
+    row.className = 'column-order-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const handle = document.createElement('button');
+    handle.type = 'button';
+    handle.className = 'column-order-handle';
+    handle.disabled = disabled;
+    handle.setAttribute('aria-label', 'Mover coluna ' + label);
+    handle.setAttribute('aria-describedby', 'column-order-help');
+    const icon = document.createElement('span');
+    icon.className = 'column-order-grip';
+    icon.setAttribute('aria-hidden', 'true');
+    handle.append(icon);
+    row.append(name, handle);
+    handles.push(handle);
+    return row;
+  });
+
+  function move(from, to, keyboard) {
+    if (to === from) return;
+    const keys = fields.map(([key]) => key);
+    keys.splice(to, 0, keys.splice(from, 1)[0]);
+    onMove(keys);
+    list.children[to]?.querySelector('button')?.focus({preventScroll: !keyboard});
+    const status = document.getElementById('column-order-status');
+    if (status) status.textContent = fields[from][1] + ', posição ' + (to + 1) + ' de ' + fields.length + '.';
+  }
+
+  handles.forEach((handle, from) => {
+    let active = null;
+    let frame;
+    let marker;
+    function mark(clientY) {
+      const others = rows.filter((_, i) => i !== from);
+      const next = others.findIndex(row => {
+        const box = row.getBoundingClientRect();
+        return clientY < box.top + box.height / 2;
+      });
+      const target = next < 0 ? others.length : next;
+      const before = others[target];
+      const anchor = before || others.at(-1);
+      const className = before ? 'column-drop-before' : 'column-drop-after';
+      if (marker?.anchor !== anchor || marker?.className !== className || target === from) {
+        if (marker) marker.anchor.classList.remove(marker.className);
+        marker = null;
+        if (anchor && target !== from) {
+          anchor.classList.add(className);
+          marker = {anchor, className};
+        }
+      }
+      return target;
+    }
+    function scrollList() {
+      frame = undefined;
+      if (!active?.dragging || !handle.isConnected) return;
+      const box = list.getBoundingClientRect();
+      const y = active.y;
+      const top = Math.max(0, box.top);
+      const bottom = Math.min(window.innerHeight, box.bottom);
+      const speed = y < top + 28 ? -12 : y > bottom - 28 ? 12 : 0;
+      if (!speed) return;
+      const before = list.scrollTop;
+      list.scrollTop += speed;
+      if (before === list.scrollTop) return;
+      mark(y);
+      frame = requestAnimationFrame(scrollList);
+    }
+    function clear() {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
+      if (marker) marker.anchor.classList.remove(marker.className);
+      marker = null;
+      rows[from].classList.remove('column-dragging');
+      active = null;
+    }
+    handle.addEventListener('pointerdown', event => {
+      if (!event.isPrimary || event.button !== 0 || active) return;
+      handle.setPointerCapture(event.pointerId);
+      active = {id: event.pointerId, start: event.clientY, y: event.clientY, dragging: false};
+    });
+    handle.addEventListener('pointermove', event => {
+      if (active?.id !== event.pointerId) return;
+      active.y = event.clientY;
+      if (!active.dragging && Math.abs(active.y - active.start) < 4) return;
+      active.dragging = true;
+      rows[from].classList.add('column-dragging');
+      mark(active.y);
+      if (frame === undefined) frame = requestAnimationFrame(scrollList);
+    });
+    handle.addEventListener('pointerup', event => {
+      if (active?.id !== event.pointerId) return;
+      const box = list.getBoundingClientRect();
+      const drop = active.dragging && event.clientX >= box.left && event.clientX <= box.right &&
+        event.clientY >= box.top - 16 && event.clientY <= box.bottom + 16;
+      const target = drop ? mark(event.clientY) : from;
+      clear();
+      move(from, target, false);
+    });
+    handle.addEventListener('pointercancel', clear);
+    handle.addEventListener('lostpointercapture', clear);
+    handle.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && active) {
+        clear();
+        return;
+      }
+      const destination = {
+        ArrowUp: from - 1,
+        ArrowDown: from + 1,
+        Home: 0,
+        End: fields.length - 1,
+      };
+      if (!Object.hasOwn(destination, event.key)) return;
+      event.preventDefault();
+      if (active) return;
+      const to = destination[event.key];
+      if (to >= 0 && to < fields.length) move(from, to, true);
+    });
+  });
+
+  list.replaceChildren(...rows);
+}
+
 function renderExcel() {
   const type = state.exportTable
   const list = exportRows()
@@ -393,30 +520,11 @@ function renderExcel() {
     fieldList.append(label)
   }
   $('excel-count').textContent=`${fields.length} colunas · ${list.length} registros`
-  const order = $('export-order')
-  order.replaceChildren()
-  for (const [idx,key] of fields.entries()) {
-    const row=element('div',undefined,'order-row')
-    const group=element('span')
-    const shift = (offset) => {
-      const target = idx+offset
-      const next = [...fields]
-      ;[next[idx],next[target]]=[next[target],next[idx]]
-      state.order[type]=next
-      saveExcel()
-      renderExcel()
-      order.children[target]?.querySelector('button:enabled')?.focus()
-    }
-    const earlier = button('↑',()=>shift(-1),'')
-    const later = button('↓',()=>shift(1),'')
-    earlier.setAttribute('aria-label',`Subir coluna ${labelList[key]}`)
-    later.setAttribute('aria-label',`Descer coluna ${labelList[key]}`)
-    earlier.disabled=idx===0
-    later.disabled=idx+1===fields.length
-    group.append(earlier,later)
-    row.append(element('span',labelList[key]),group)
-    order.append(row)
-  }
+  renderColumnOrder($('export-order'), fields.map(key => [key,labelList[key]]), next => {
+    state.order[type] = next
+    saveExcel()
+    renderExcel()
+  }, {tag: 'div'})
   $('download').disabled = !fields.length || !list.length
   $('export-preview').replaceChildren(fields.length&&list.length?table(fields,list.slice(0,8),type,false):element('p','Selecione colunas e aplique um recorte com registros.','empty'))
 }
@@ -428,6 +536,7 @@ function renderSource() {
   const published = Date.parse(data?.generatedAt)
   $('portal-update').textContent = Number.isFinite(published) ? 'Última carga publicada em '+dateTime.format(published)+' · Atualização diária programada às 11h23, horário de São Paulo.' : ''
   $('hero-status').textContent = !data ? state.error?'Base indisponível':'Consultando fontes' : 'Cobertura parcial'
+  $('coverage-help').hidden = !data
   $('hero-date').textContent = federal ? 'Arquivos federais de '+dateTime.format(federal) : state.error?'Tente novamente em instantes.':'Aguarde o carregamento'
   const labels = [
     data ? `Integrada · ${rows('instruments').filter(r=>r.source==='Transferegov.br').length} instrumentos` : 'Base de instrumentos',
@@ -502,7 +611,29 @@ $('download').addEventListener('click',()=>{
   setTimeout(()=>URL.revokeObjectURL(url),1500)
   $('export-message').textContent=`Planilha gerada com ${list.length} registros e ${fields.length} colunas.`
 })
-window.addEventListener('hashchange',renderView)
+const coverageHelp = $('coverage-help')
+const coverageToggle = $('coverage-toggle')
+const coverageTooltip = $('coverage-tooltip')
+let coveragePinned = false
+function showCoverage(visible) {
+  coverageTooltip.hidden = !visible
+  coverageToggle.setAttribute('aria-expanded',String(visible))
+}
+coverageHelp.addEventListener('pointerenter',event => { if (event.pointerType === 'mouse') showCoverage(true) })
+coverageHelp.addEventListener('pointerleave',() => { if (!coveragePinned) showCoverage(false) })
+coverageToggle.addEventListener('focus',() => { if (coverageToggle.matches(':focus-visible')) showCoverage(true) })
+coverageToggle.addEventListener('blur',() => { if (!coveragePinned) showCoverage(false) })
+coverageToggle.addEventListener('click',() => {
+  coveragePinned = !coveragePinned
+  showCoverage(coveragePinned)
+})
+function closeCoverage() {
+  coveragePinned = false
+  showCoverage(false)
+}
+document.addEventListener('click',event => { if (!coverageHelp.contains(event.target)) closeCoverage() })
+document.addEventListener('keydown',event => { if (event.key === 'Escape') closeCoverage() })
+window.addEventListener('hashchange',() => { closeCoverage(); renderView() })
 renderTable()
 renderView()
 renderSource()
