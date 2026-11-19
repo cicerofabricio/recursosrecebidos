@@ -25,6 +25,8 @@ TRANSFEREGOV = 'https://api-publica.transferegov.gestao.gov.br/'
 BASE = TRANSFEREGOV + 'downloads/dadosgov/'
 STATE = 'https://www.transparencia.sp.gov.br/Convenios'
 STATE_AMENDMENTS = 'https://www.transparencia.sp.gov.br/EmendasParlamentares'
+STATE_AMENDMENTS_CSV = 'https://www.transparencia.sp.gov.br/Dados%20Abertos/Emendas/emendas.zip'
+PUBLIC_SNAPSHOT = 'https://recursosrecebidos.sigpc.com.br/api/dados'
 SPECIAL_SOURCE = 'Transferegov.br · Transferências Especiais'
 MUNICIPAL_NAMES = {
     'PREFEITURA MUNICIPAL DE SAO BERNARDO DO CAMPO', 'MUNICIPIO DE SAO BERNARDO DO CAMPO',
@@ -37,19 +39,19 @@ CITY_ID = '46523239000147'
 REQUEST_HEADERS = {'User-Agent': 'RecursosRecebidosSBC/1.0', 'Accept': '*/*'}
 FILES = ('proposta', 'convenio', 'emenda', 'desembolso', 'empenho', 'termo_aditivo', 'prorroga_oficio', 'meta_crono_fisico')
 
-def request(url, body=None, referer=STATE):
+def request(url, body=None, referer=STATE, *, timeout=25, attempts=3):
     headers = dict(REQUEST_HEADERS)
     if body is not None:
         headers.update({'Content-Type': 'application/json', 'Referer': referer, 'X-Requested-With': 'XMLHttpRequest'})
     query = urllib.request.Request(url, data=body, headers=headers)
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
-            return urllib.request.urlopen(query, timeout=25)
+            return urllib.request.urlopen(query, timeout=timeout)
         except urllib.error.HTTPError as error:
-            if error.code not in {429, 500, 502, 503, 504} or attempt == 2:
+            if error.code not in {429, 500, 502, 503, 504} or attempt == attempts - 1:
                 raise
         except (urllib.error.URLError, TimeoutError):
-            if attempt == 2:
+            if attempt == attempts - 1:
                 raise
         time.sleep(2 ** attempt)
 
@@ -75,7 +77,7 @@ def rows(directory, name, required, fast_key=None):
                     yield row
 
 def clean(value):
-    return ' '.join((value or '').split())
+    return ' '.join(str(value).split()) if isinstance(value, (str, int, float)) else ''
 
 def plain(s):
     return ''.join(c for c in unicodedata.normalize('NFD', clean(s).upper()) if not unicodedata.combining(c))
@@ -369,7 +371,7 @@ def state_agreements(municipal_ids):
         found = []
         for page in range(1, 6):
             body = {'page':page, 'pageSize':100, 'totalItens':0, key:value}
-            with request(STATE + '/Buscar', json.dumps(body).encode()) as res:
+            with request(STATE + '/Buscar', json.dumps(body).encode(), timeout=12, attempts=2) as res:
                 response = json.load(res)
             found.extend(response['items'])
             if not response.get('hasNext'):
@@ -411,6 +413,80 @@ def state_agreements(municipal_ids):
                     agreements[number] = candidate
     return list(agreements.values()), source_date
 
+def state_agreements_or_previous(municipal_ids):
+    try:
+        records, stamp = state_agreements(municipal_ids)
+        if not records:
+            raise ValueError('A consulta estadual retornou zero convênios')
+        return records, stamp, 'api'
+    except (OSError, ValueError, KeyError) as error:
+        print(f'Consulta de convênios estaduais indisponível ({type(error).__name__}); preservando a lista publicada.', flush=True)
+        with request(PUBLIC_SNAPSHOT, timeout=20, attempts=2) as response:
+            raw = response.read(5_000_001)
+        if len(raw) > 5_000_000:
+            raise ValueError('A carga anterior ultrapassou o limite')
+        previous = json.loads(raw)
+        kept = []
+        for row in previous['instruments']:
+            if row['origin'] != 'Estado' or row['source'] != 'Portal da Transparência SP':
+                continue
+            if row['cnpj'] not in municipal_ids and (row['cnpj'] or plain(row['recipient']) not in MUNICIPAL_NAMES):
+                continue
+            row['amendment'] = 'Não identificada'
+            row.pop('amendmentCode', None)
+            row.pop('sections', None)
+            kept.append(row)
+        stamp = previous['coverage']['stateUpdatedAt']
+        if not kept or not stamp:
+            raise ValueError('A carga anterior não contém convênios estaduais utilizáveis')
+        return kept, stamp, 'previous'
+
+
+def state_amendment_archive():
+    with request(STATE_AMENDMENTS_CSV) as response:
+        raw = response.read(12_000_001)
+    if len(raw) > 12_000_000:
+        raise ValueError('Arquivo estadual excede o limite de download')
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        files = [entry for entry in archive.infolist() if entry.filename.lower().endswith('.csv')]
+        if len(files) != 1 or files[0].file_size > 80_000_000:
+            raise ValueError('Leiaute inesperado no arquivo de emendas estaduais')
+        stamp = dt.datetime(*files[0].date_time,tzinfo=ZoneInfo('America/Sao_Paulo')).isoformat()
+        with archive.open(files[0]) as file:
+            reader = csv.reader(io.TextIOWrapper(file,encoding='utf-8-sig',newline=''),delimiter=';')
+            header = [plain(title) for title in next(reader)]
+            layout = [
+                'FILTRO - TIPO DE CONSULTA','ANO DE REFERÊNCIA','ÓRGÃO OU ENTIDADE EXECUTORA','ORIGEM DOS RECURSOS',
+                'NÚMERO DA EMENDA','STATUS DA EMENDA','TIPO DE EMENDA','FORMA DE REPASSE','AUTORIA','PARTIDO POLÍTICO',
+                'NÚMERO DO INSTRUMENTO JURÍDICO','BENEFICIÁRIO','OBJETO','TIPO DE DESPESA','FUNÇÃO DE GOVERNO',
+                'LOCALIZAÇÃO DO GASTO','VALOR TOTAL DO PLANO DE AÇÃO','VALOR PREVISTO','VALOR EMPENHADO',
+                'VALOR LIQUIDADO','VALOR PAGO','VALOR LIBERADO','VALOR CONTRAPARTIDA','PLANO DE TRABALHO',
+                'NOTA DE EMPENHO','NOTA DE LIQUIDAÇÃO','NOTA DE PAGAMENTO','CNPJ DO BENEFICIÁRIO',
+            ]
+            if len(header) != len(layout) or any(
+                    not re.fullmatch(re.escape(actual).replace('�','.'), plain(expected))
+                    for actual, expected in zip(header, layout)):
+                raise ValueError('Cabeçalho inesperado no arquivo de emendas estaduais')
+            result = []
+            for record in reader:
+                if len(record) != len(layout):
+                    raise ValueError('Linha inválida no arquivo de emendas estaduais')
+                r = [None if item == '-' else item for item in record]
+                if r[0] != 'Concedidas':
+                    continue
+                result.append({
+                    'anoReferencia':r[1], 'orgaoEntidadeExecutora':r[2], 'numeroEmenda':r[4], 'estagioAtualDescricao':r[5],
+                    'tipoEmendaDescricao':r[6], 'formaRepasse':r[7], 'autoria':r[8], 'partidoPolitico':r[9],
+                    'numeroInstrumentoJuridico':r[10], 'beneficiario':r[11], 'objeto':r[12], 'funcaoGoverno':r[14],
+                    'valorPrevisto':r[17].replace('.','') if r[17] else None,
+                    'valorEmpenhado':r[18].replace('.','') if r[18] else None,
+                    'valorLiquidado':r[19].replace('.','') if r[19] else None,
+                    'valorPago':r[20].replace('.','') if r[20] else None,
+                    'notaEmpenho':r[24], 'notaPagamento':r[26], 'cnpjBeneficiario':r[27],
+                })
+    return result, stamp
+
+
 def state_amendments(agreements, municipal_ids):
     units = {row['cnpj']:row['recipient'] for row in agreements if row['cnpj']}
     units[CITY_ID] = 'PREFEITURA MUNICIPAL DE SAO BERNARDO DO CAMPO'
@@ -420,7 +496,7 @@ def state_amendments(agreements, municipal_ids):
         stamp = None
         for page in range(1, 11):
             query = {'tipoConcedidaRealizada':'Concedidas', 'page':page, 'pageSize':100, 'totalItens':0, field:value}
-            with request(STATE_AMENDMENTS+'/Buscar', json.dumps(query).encode(), STATE_AMENDMENTS+'/Concedidas') as response:
+            with request(STATE_AMENDMENTS+'/Buscar', json.dumps(query).encode(), STATE_AMENDMENTS+'/Concedidas', timeout=12, attempts=2) as response:
                 result = json.load(response)
             if stamp and stamp != result['ultimaAtualizacao']:
                 raise ValueError('Fonte de emendas estaduais mudou durante a consulta')
@@ -435,49 +511,56 @@ def state_amendments(agreements, municipal_ids):
     seen = {}
     source_date = None
     by_number = {row['number']:row for row in agreements}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        batches = pool.map(lambda arg:fetch(*arg), [('beneficiario','BERNARDO DO CAMPO'), ('localizacaoGasto','SÃO BERNARDO DO CAMPO')])
-        for entries, stamp in batches:
-            if source_date and source_date != stamp:
-                raise ValueError('Fonte de emendas estaduais mudou entre os filtros')
-            source_date = stamp
-            for row in entries:
-                doc = cnpj(row.get('cnpjBeneficiario'))
-                name = clean(row.get('beneficiario'))
-                official_name = plain(name)
-                if doc not in municipal_ids and (doc or official_name not in MUNICIPAL_NAMES):
-                    continue
-                code = str(row.get('numeroEmenda') or '')
-                if not re.fullmatch(r'\d{4}\.A?\d{1,10}\.\d{1,12}', code):
-                    raise ValueError('Número de emenda estadual inesperado')
-                number = public_text(row.get('numeroInstrumentoJuridico'),80)
-                effective_doc = doc or (CITY_ID if official_name in {units[CITY_ID], 'MUNICIPIO DE '+CITY} else '13961905000170')
-                unique = (code, effective_doc, number, clean(row.get('orgaoEntidadeExecutora')))
-                row_id = 'sp-emenda-' + hashlib.sha256('|'.join(unique).encode()).hexdigest()[:24]
-                item = {
-                    'id':row_id, 'origin':'Estado', 'source':'Portal da Transparência SP · Emendas',
-                    'amendmentCode':code, 'number':code, 'relatedNumber':number,
-                    'author':public_text(row.get('autoria'),200), 'recipient':public_text(name or units.get(effective_doc)),
-                    'cnpj':doc, 'agency':public_text(row.get('orgaoEntidadeExecutora'),250),
-                    'type':public_text(row.get('formaRepasse') or row.get('tipoEmendaDescricao') or row.get('tipoEmenda'),120),
-                    'object':public_text(row.get('objeto')), 'status':public_text(row.get('estagioAtualDescricao'),120),
-                    'year':int(row['anoReferencia'] or code[:4]), 'total':amount(row['valorPrevisto']), 'granted':amount(row['valorPago']),
-                    'details':{'Partido':public_text(row.get('partidoPolitico'),100), 'Função de governo':public_text(row.get('funcaoGoverno'),200),
-                               'Valor empenhado':format_brl(amount(row.get('valorEmpenhado'))),
-                               'Valor liquidado':format_brl(amount(row.get('valorLiquidado'))),
-                               'Nota de empenho':public_text(row.get('notaEmpenho'),500),
-                               'Nota de pagamento':public_text(row.get('notaPagamento'),500)},
-                    'link':STATE_AMENDMENTS+'/Concedidas',
-                }
-                agreement = by_number.get(number)
-                same_name = agreement and plain(agreement['recipient']) == official_name
-                if agreement and ((doc and doc == agreement['cnpj']) or (same_name and (not doc or not agreement['cnpj']))):
-                    item['instrumentId'] = agreement['id']
-                previous = seen.get(row_id)
-                if previous and (previous['total'], previous['granted']) != (item['total'], item['granted']):
-                    raise ValueError(f'Emenda estadual {code} retornou valores divergentes')
-                if not previous or (doc and not previous['cnpj']):
-                    seen[row_id] = item
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            batches = list(pool.map(lambda arg:fetch(*arg), [
+                ('beneficiario','BERNARDO DO CAMPO'), ('localizacaoGasto','SÃO BERNARDO DO CAMPO')]))
+        mode = 'api'
+    except (OSError, ValueError, KeyError) as error:
+        print(f'Consulta de emendas estaduais indisponível ({type(error).__name__}); usando o CSV oficial.', flush=True)
+        batches = [state_amendment_archive()]
+        mode = 'csv'
+    for entries, stamp in batches:
+        if source_date and source_date != stamp:
+            raise ValueError('Fonte de emendas estaduais mudou entre os filtros')
+        source_date = stamp
+        for row in entries:
+            doc = cnpj(row.get('cnpjBeneficiario'))
+            name = clean(row.get('beneficiario'))
+            official_name = plain(name)
+            if doc not in municipal_ids and (doc or official_name not in MUNICIPAL_NAMES):
+                continue
+            code = str(row.get('numeroEmenda') or '')
+            if not re.fullmatch(r'\d{4}\.A?\d{1,10}\.\d{1,12}', code):
+                raise ValueError('Número de emenda estadual inesperado')
+            number = public_text(row.get('numeroInstrumentoJuridico'),80)
+            effective_doc = doc or (CITY_ID if official_name in {units[CITY_ID], 'MUNICIPIO DE '+CITY} else '13961905000170')
+            unique = (code, effective_doc, number, clean(row.get('orgaoEntidadeExecutora')))
+            row_id = 'sp-emenda-' + hashlib.sha256('|'.join(unique).encode()).hexdigest()[:24]
+            item = {
+                'id':row_id, 'origin':'Estado', 'source':'Portal da Transparência SP · Emendas',
+                'amendmentCode':code, 'number':code, 'relatedNumber':number,
+                'author':public_text(row.get('autoria'),200), 'recipient':public_text(name or units.get(effective_doc)),
+                'cnpj':doc, 'agency':public_text(row.get('orgaoEntidadeExecutora'),250),
+                'type':public_text(row.get('formaRepasse') or row.get('tipoEmendaDescricao') or row.get('tipoEmenda'),120),
+                'object':public_text(row.get('objeto')), 'status':public_text(row.get('estagioAtualDescricao'),120),
+                'year':int(row['anoReferencia'] or code[:4]), 'total':amount(row['valorPrevisto']), 'granted':amount(row['valorPago']),
+                'details':{'Partido':public_text(row.get('partidoPolitico'),100), 'Função de governo':public_text(row.get('funcaoGoverno'),200),
+                           'Valor empenhado':format_brl(amount(row.get('valorEmpenhado'))),
+                           'Valor liquidado':format_brl(amount(row.get('valorLiquidado'))),
+                           'Nota de empenho':public_text(row.get('notaEmpenho'),500),
+                           'Nota de pagamento':public_text(row.get('notaPagamento'),500)},
+                'link':STATE_AMENDMENTS+'/Concedidas',
+            }
+            agreement = by_number.get(number)
+            same_name = agreement and plain(agreement['recipient']) == official_name
+            if agreement and ((doc and doc == agreement['cnpj']) or (same_name and (not doc or not agreement['cnpj']))):
+                item['instrumentId'] = agreement['id']
+            previous = seen.get(row_id)
+            if previous and (previous['total'], previous['granted']) != (item['total'], item['granted']):
+                raise ValueError(f'Emenda estadual {code} retornou valores divergentes')
+            if not previous or (doc and not previous['cnpj']):
+                seen[row_id] = item
     if not seen:
         raise ValueError('A consulta de emendas estaduais não retornou beneficiários municipais')
     for item in seen.values():
@@ -487,7 +570,7 @@ def state_amendments(agreements, municipal_ids):
             section = agreement.setdefault('sections', {}).setdefault('Emendas vinculadas', [])
             section.append({'Emenda':item['amendmentCode'], 'Autoria':item['author'], 'Valor':item['granted']})
             agreement['amendmentCode'] = ' · '.join(dict.fromkeys(r['Emenda'] for r in section))
-    return list(seen.values()), source_date
+    return list(seen.values()), source_date, mode
 
 
 def build(directory, proposals):
@@ -580,12 +663,12 @@ def main(directory, output):
     instruments, payments, ids = build(directory, proposals)
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         quotas = pool.submit(state_quotas)
-        agreed = pool.submit(state_agreements, ids)
+        agreed = pool.submit(state_agreements_or_previous, ids)
         funds = pool.submit(federal_fund_plans, ids)
         special = pool.submit(special_plans, ids)
         partnerships = pool.submit(federal_partnerships, ids)
-        state_rows, state_date = agreed.result()
-        amendments, state_amendment_date = state_amendments(state_rows, ids)
+        state_rows, state_date, state_mode = agreed.result()
+        amendments, state_amendment_date, state_amendment_mode = state_amendments(state_rows, ids)
         plans, fund_date = funds.result()
         special_rows, special_payments, special_date = special.result()
         partnership_rows, partnership_payments, partnership_date = partnerships.result()
@@ -602,7 +685,7 @@ def main(directory, output):
     data = {'schemaVersion':3, 'generatedAt':dt.datetime.now(dt.timezone.utc).isoformat(),
             'coverage':{'federalFiles':version,'federalProposalMode':proposal_mode,'federalProposalUpdatedAt':proposal_date,
                         'federalFundUpdatedAt':fund_date,'stateUpdatedAt':state_date,
-                        'stateAmendmentUpdatedAt':state_amendment_date,'federalSpecialUpdatedAt':special_date, 'federalPartnershipUpdatedAt':partnership_date},
+                        'stateAmendmentUpdatedAt':state_amendment_date, 'stateAmendmentMode':state_amendment_mode, 'stateMode':state_mode,'federalSpecialUpdatedAt':special_date, 'federalPartnershipUpdatedAt':partnership_date},
             'instruments':sorted(instruments,key=lambda r:(r.get('signed') or r.get('start',''),r['number']),reverse=True),
             'amendments':sorted(amendments,key=lambda r:(r['year'],r['amendmentCode']),reverse=True),
             'payments':sorted(payments,key=lambda r:(r.get('day',r.get('period','')),r['id']),reverse=True)}

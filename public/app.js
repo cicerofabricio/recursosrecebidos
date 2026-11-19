@@ -605,7 +605,8 @@ function renderSource() {
   $('hero-status').textContent=data?(state.area==='federal'?'Transferegov.br':'Portais oficiais de São Paulo'):state.error?'Base indisponível':'Consultando fontes'
   $('coverage-help').hidden=!data
   $('coverage-tooltip').textContent=areaConfig().help
-  $('hero-date').textContent=Number.isFinite(sourceDate)?(state.area==='federal'?'Arquivos federais de ':'Convênios estaduais atualizados em ')+dateTime.format(sourceDate):state.error?'Tente novamente em instantes.':'Data da fonte indisponível'
+  const stateDateLabel=coverage?.stateMode==='previous'?'Última consulta válida de convênios em ':'Convênios estaduais atualizados em '
+  $('hero-date').textContent=Number.isFinite(sourceDate)?(state.area==='federal'?'Arquivos federais de ':stateDateLabel)+dateTime.format(sourceDate):state.error?'Tente novamente em instantes.':'Data da fonte indisponível'
   const counts=[
     rows('instruments','federal').filter(r=>r.source==='Transferegov.br').length,
     rows('instruments','federal').filter(r=>r.source==='Transferegov.br · Fundo a Fundo').length,
@@ -619,6 +620,8 @@ function renderSource() {
     const card=element('article',undefined,'source-box')
     const info=i===0&&coverage?.federalProposalMode==='csv'?notes.replace('Propostas consultadas pela API.','Propostas lidas dos arquivos oficiais do Transferegov nesta carga.'):notes
     card.append(element('p',data?integer.format(counts[i])+' '+labels[i]:'Fonte oficial','coverage'),element('h2',name),element('p',info))
+    if (stamp==='stateUpdatedAt'&&coverage?.stateMode==='previous') card.append(element('p','A consulta estadual está temporariamente indisponível. O portal conserva os convênios da última consulta válida.'))
+    if (stamp==='stateAmendmentUpdatedAt'&&coverage?.stateAmendmentMode==='csv') card.append(element('p','Nesta carga, foram usados os registros do arquivo oficial de dados abertos.'))
     const date=Date.parse(coverage?.[stamp])
     if (Number.isFinite(date)) card.append(element('p','Atualização na fonte em '+dateTime.format(date)+'.'))
     const a=link('Consultar fonte oficial',url)
