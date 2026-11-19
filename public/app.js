@@ -425,6 +425,8 @@ function renderSource() {
   const dates = Object.values(data?.coverage?.federalFiles || {}).map(v=>Date.parse(v)).filter(Number.isFinite)
   const federal = dates.length ? Math.max(...dates) : null
   const n = data?.coverage?.stateUnverified
+  const published = Date.parse(data?.generatedAt)
+  $('portal-update').textContent = Number.isFinite(published) ? 'Última carga publicada em '+dateTime.format(published)+' · Atualização diária programada às 11h23, horário de São Paulo.' : ''
   $('hero-status').textContent = !data ? state.error?'Base indisponível':'Consultando fontes' : 'Cobertura parcial'
   $('hero-date').textContent = federal ? 'Arquivos federais de '+dateTime.format(federal) : state.error?'Tente novamente em instantes.':'Aguarde o carregamento'
   const labels = [
