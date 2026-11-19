@@ -18,6 +18,18 @@ const decoder = new TextDecoder()
 const encoder = new TextEncoder()
 const base64url = value => Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),v=>v.charCodeAt(0))
 
+async function issuerKeys() {
+  const controller = new AbortController()
+  const deadline = setTimeout(()=>controller.abort(),6000)
+  try {
+    const response=await fetch(issuer+'/.well-known/jwks',{redirect:'manual',signal:controller.signal})
+    if (!response.ok) return null
+    return await response.json()
+  } finally {
+    clearTimeout(deadline)
+  }
+}
+
 async function validIdentity(request) {
   const token = request.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9._-]{100,8500})$/i)?.[1]
   if (!token || token.split('.').length!==3) return false
@@ -32,12 +44,11 @@ async function validIdentity(request) {
       || !['schedule','workflow_dispatch'].includes(c.event_name) || c.runner_environment!=='github-hosted'
       || !Number.isInteger(c.exp) || !Number.isInteger(c.nbf) || !Number.isInteger(c.iat)
       || c.exp<=now || c.nbf>now+30 || c.iat>now+30 || c.exp-c.iat>900) return false
-    const jwks=await fetch(issuer+'/.well-known/jwks',{redirect:'error',signal:AbortSignal.timeout(5000),cf:{cacheEverything:true,cacheTtl:180}})
-    if (!jwks.ok) return false
-    const jwk=(await jwks.json()).keys?.find(k=>k.kid===h.kid&&k.kty==='RSA'&&k.alg==='RS256')
+    const jwks=await issuerKeys()
+    const jwk=jwks?.keys?.find(k=>k.kid===h.kid&&k.kty==='RSA'&&k.alg==='RS256')
     if (!jwk) return false
     const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify'])
-    return crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,base64url(signature),encoder.encode(header+'.'+claims))
+    return await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,base64url(signature),encoder.encode(header+'.'+claims))
   } catch {
     return false
   }
