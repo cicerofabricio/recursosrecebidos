@@ -41,10 +41,10 @@ const areas = {
     names:{instruments:'Instrumentos e planos',payments:'Desembolsos'},
     subtitles:{instruments:'Consulte convênios, contratos, parcerias e planos de ação. Veja os valores pactuados ou previstos em cada instrumento.',payments:'Consulte os desembolsos federais por instrumento e documento financeiro.'},
     fields:{
-      instruments:['number','agency','recipient','cnpj','type','object','status','amendment','amendmentCode','author','year','signed','start','end','total','transfer','counterpart','paid','proposal','process','source'],
+      instruments:['number','amendmentCode','author','agency','recipient','cnpj','type','object','status','amendment','year','signed','start','end','total','transfer','counterpart','paid','proposal','process','source'],
       payments:['period','day','number','document','agency','recipient','cnpj','type','object','year','paid','source'],
     },
-    defaults:{instruments:['number','agency','recipient','object','status','transfer','paid'],payments:['period','day','number','recipient','object','paid']},
+    defaults:{instruments:['number','amendmentCode','author','agency','recipient','object','status','transfer','paid'],payments:['period','day','number','recipient','object','paid']},
     filters:{instruments:['paid','year','recipient','type','status','amendment','source'],payments:['paid','year','recipient','type','agency']},
   },
   estadual: {
@@ -54,11 +54,11 @@ const areas = {
     names:{instruments:'Convênios',amendments:'Emendas',payments:'Quotas-partes'},
     subtitles:{instruments:'Consulte convênios estaduais, seus valores previstos e concedidos e a vigência.',amendments:'Consulte as emendas destinadas a órgãos municipais, com valores repassados e vínculos publicados pelo Estado.',payments:'Consulte ICMS, IPVA, IPI Exportação e compensação financeira por competência.'},
     fields:{
-      instruments:['number','agency','agencyUnit','recipient','cnpj','type','object','amendment','amendmentCode','year','start','end','total','granted','source'],
+      instruments:['number','amendmentCode','agency','agencyUnit','recipient','cnpj','type','object','amendment','year','start','end','total','granted','source'],
       amendments:['amendmentCode','author','agency','recipient','cnpj','type','object','status','year','relatedNumber','total','granted','source'],
       payments:['period','agency','recipient','cnpj','type','object','year','paid','source'],
     },
-    defaults:{instruments:['number','agency','recipient','object','year','total','granted','amendment'],amendments:['amendmentCode','author','recipient','object','year','granted','relatedNumber'],payments:['period','object','recipient','paid']},
+    defaults:{instruments:['number','amendmentCode','agency','recipient','object','year','total','granted','amendment'],amendments:['amendmentCode','author','recipient','object','year','granted','relatedNumber'],payments:['period','object','recipient','paid']},
     filters:{instruments:['granted','year','agency','recipient','amendment'],amendments:['granted','year','author','recipient','type'],payments:['year','period','object']},
   },
 }
