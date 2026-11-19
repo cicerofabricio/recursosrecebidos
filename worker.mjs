@@ -84,7 +84,7 @@ function validSnapshot(data) {
   const payments=new Set()
   for (const row of data.instruments) {
     if (!row || instruments.has(row.id)) return false
-    const federal=(/^tg-[0-9]{4,12}$/.test(row.id)&&row.source==='Transferegov.br')
+    const federal=(typeof row.number==='string' && /^[0-9A-Z]{4,12}$/.test(row.number) && row.id==='tg-'+row.number && row.source==='Transferegov.br')
       || (version>=2&&/^faf-[0-9]{1,12}$/.test(row.id)&&row.source==='Transferegov.br · Fundo a Fundo'&&row.paid===null)
       || (version===3&&/^pix-[0-9]{1,12}$/.test(row.id)&&row.source===specialSource&&row.amendment==='Identificada')
     const partnership=version===3&&/^parceria-[0-9]{1,12}$/.test(row.id)&&row.source===partnershipSource
