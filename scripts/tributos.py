@@ -2,6 +2,8 @@
 import datetime as dt
 import http.cookiejar
 import re
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from decimal import Decimal
@@ -69,8 +71,17 @@ def state_quotas():
 
     def open_page(body=None):
         data = urllib.parse.urlencode(body).encode() if body is not None else None
-        with client.open(urllib.request.Request(URL, data=data, headers=headers), timeout=30) as r:
-            return Page(r.read().decode('utf-8'))
+        for attempt in range(3):
+            try:
+                with client.open(urllib.request.Request(URL, data=data, headers=headers), timeout=30) as r:
+                    return Page(r.read().decode('utf-8'))
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (500, 502, 503, 504) or attempt == 2:
+                    raise
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if attempt == 2:
+                    raise
+            time.sleep(2 ** (attempt + 1))
 
     blank = open_page()
     if not {'__VIEWSTATE','__EVENTVALIDATION'} <= blank.hidden.keys():
